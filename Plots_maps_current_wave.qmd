@@ -1,0 +1,357 @@
+---
+title: "Maps"
+author: "Malene Dekke Eik"
+format: html
+editor: visual
+---
+
+## Map
+
+Maps are created for the master thesis of Malene Dekke Eik
+
+## Library
+
+```{r}
+# Load required libraries
+
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(ggspatial)
+library(prettymapr)
+library(patchwork)
+library(here)
+
+
+
+#devtools::install_github("ropensci/rnaturalearthhires")
+library(rnaturalearth)
+#library(ggsn) #Add scale bars and north arrows 
+
+
+
+
+```
+
+### Colour palette for thesis
+
+```{r}
+grays <- c("#444444", "#787878", "#A6A6A6", "#D6D6D6")
+bluegreys <- c("#07415B", "#39738D", "#5BA3BB", "#A7D3E5")
+blues <- c("#174A7E", "#0273B3", "#6DAEDB", "#A9D7F2")
+magentas <- c("#9B3B70", "#CF81AC", "#DA9EBF", "#E1B9D9")
+reds <- c("#9E2B25", "#C33C4C", "#E57A7A", "#F4B7B4")
+oranges <- c("#C0651C", "#D46004", "#F5B16A", "#FAD6A5")
+goldens <- c("#B98A1C", "#EBB540", "#F7D568", "#FBEBA2")
+greens <- c("#2C6E49", "#0EA47A", "#93D190", "#CFEACF")
+
+base_colors <- c("#0273B3", "#CF81AC", "#C33C4C", "#D46004", "#EBB540", "#0EA47A")
+
+colors <- c(grays, bluegreys, blues, magentas, reds, oranges, goldens, greens)
+
+data <- data.frame(
+  Color = factor(colors, levels = colors),
+  X = rep(1:4, times = length(colors) / 4),
+  Y = rep(1:(length(colors) / 4), each = 4)
+)
+
+# Plot colors
+ggplot(data, aes(x = X, y = -Y, fill = Color)) +
+  geom_tile() +
+  scale_fill_identity() +
+  theme_void() +
+  theme(legend.position = "none")
+```
+
+## Data
+
+The utsira windpark area :\
+4B0 16 '09" E, 59B0 26' 53"N
+
+4B0 40' 25" E, 59B0 28' 56"N
+
+4B0 24' 27" E, 59B0 04' 10"N
+
+4B0 48' 44" E, 59B0 06' 18" N
+
+Austevoll Ocean Forest farm :\
+5B0 13'E 60B0 09'N
+
+```{r}
+
+Utsira_area <- data.frame(
+  lon = c(4 + 16/60 + 9/3600, 
+          4 + 40/60 + 25/3600, 
+          4 + 48/60 + 44/3600, 
+          4 + 24/60 + 27/3600, 
+          4 + 16/60 + 9/3600),  # Repeating the first coordinate to close polygon
+  lat = c(59 + 26/60 + 53/3600, 
+          59 + 28/60 + 56/3600, 
+          59 + 06/60 + 18/3600, 
+          59 + 04/60 + 10/3600, 
+          59 + 26/60 + 53/3600) #Repeaing first coordinate...
+)
+
+Austevoll_farm <- data.frame(
+  lon = c(5 + 13/60),
+  lat = c(60 + 09/60)
+)
+
+
+Area_square <- data.frame(
+  lon = c(4, 
+          6, 
+          6, 
+          4, 
+          4),
+  lat = c(60.5,
+          60.5, 
+          59, 
+          59, 
+          60.5) )
+
+
+
+# Convert Utsira area to an sf object in WGS84 (EPSG:4326)
+Utsira_polygon <- st_polygon(list(as.matrix(Utsira_area))) %>%
+  st_sfc(crs = 4326) %>%
+  st_transform(crs = 25833)  # Transform to UTM Zone 33N (EPSG:25833)
+
+Austevoll_farm_point <- st_as_sf(Austevoll_farm, coords = c("lon", "lat"), crs = 4326) %>% 
+  st_transform(crs = 25833)
+
+
+Area_polygon <- st_polygon(list(as.matrix(Area_square))) %>%
+  st_sfc(crs = 4326) %>%
+  st_transform(crs = 25833)  # Transform to UTM Zone 33N (EPSG:25833)
+
+
+#Finding central point of Utsira area 
+Utsira_polygon2 <- st_sfc(st_polygon(list(as.matrix(Utsira_area))), crs = 4326)
+Utsira_centroid <- st_centroid(Utsira_polygon2)
+st_coordinates(Utsira_centroid)
+
+#Finding the 
+Utsira_area_sq_m <- st_area(Utsira_polygon) #m2
+Utsira_area_sq_km <- as.numeric(Utsira_area_sq_m) / 1000000 #km2
+```
+
+## Maps
+
+```{r}
+
+norway <- ne_countries(scale = 10, returnclass = "sf", country = "Norway") 
+
+# https://kartkatalog.geonorge.no/metadata/norske-fylker-og-kommuner-illustrasjonsdata-2021-klippet-etter-kyst/f08fca3c-33ee-49b9-be9f-028ebba5e460
+fylker <- st_read("data/fylker2021.json")
+
+
+# Verify CRS of fylker (should be EPSG:25833)
+if (st_crs(fylker)$epsg != 25833) {
+  fylker <- st_transform(fylker, crs = 25833)
+}
+```
+
+## Utsira / Austevoll map
+
+```{r}
+
+#Map with Vestland fylke highlighted (the study area fylke)
+norway_map <- ggplot() + 
+  geom_sf(data = norway, fill = "#D6D6D6", color = NA) +
+  #geom_sf(data = fylker, aes(fill = Fylkesnavn == "Rogaland"), show.legend = FALSE) + 
+  annotation_scale(location = "br") + 
+  #scale_fill_manual(values = c("TRUE" = "#A6A6A6", "FALSE" = "#D6D6D6")) +
+  geom_sf(data = Utsira_polygon, fill = "#0273B3", alpha = 0.8) +  # Add Utsira polygon
+  geom_sf(data = Area_polygon, colour = "#444444", linewidth = 0.8, alpha = 0) +  # Add area polygon
+  geom_sf(data = Austevoll_farm_point, color = "#C33C4C", size = 2, shape = 17) +
+  coord_sf(xlim = c(3.5, 30), ylim = c(58.5, 71)) + #Adding limits to the map
+  xlab("Longitude") + ylab("Latitude") + 
+  theme_minimal() + 
+  theme(axis.title.x = element_text(margin = margin(t = 10), hjust = 1))
+
+
+# Plot the map
+vest_map <- ggplot() + 
+  geom_sf(data = norway, fill = "#D6D6D6", color = NA) +
+  #geom_sf(data = fylker, aes(fill = Fylkesnavn == "Rogaland"), show.legend = FALSE) + 
+  annotation_scale(location = "br") + 
+  #scale_fill_manual(values = c("TRUE" = "#A6A6A6", "FALSE" = "#D6D6D6")) +
+  geom_sf(data = Utsira_polygon, fill = "#0273B3", alpha = 0.8) +  # Add Utsira polygon
+  geom_sf(data = Austevoll_farm_point, color = "#C33C4C", size = 3, shape = 17) +
+  coord_sf(xlim = c(4, 6), ylim = c(59.0, 60.5)) +  #Adding limits to the map
+  xlab("") + ylab("") +
+  theme_minimal()
+
+# Combine the maps
+norway_map + vest_map
+
+#ggsave("plots/map.jpg", width = 10, height = 6, dpi = 300)
+```
+
+## 
+
+# Wave height at UTSIRA
+
+Copernicus Marine MyOcean Viewer
+
+Data collected at Copernicus
+
+```{r}
+## Variable: 
+# Sea surface wave significant height (VHM0) m
+# Sea surface wave maximum height (VCMX) m
+# Sea surface primary swell wave significant height (VHM0_SW1) m
+
+wave1 <- read.csv("data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i_1740646749295.csv", skip = 6) %>% 
+  mutate(time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"))
+
+wave2 <- read_csv("data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i_1740646731856.csv", skip = 6) %>% 
+  mutate(time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"))
+
+wave3 <- read_csv("data/cmems_mod_glo_wav_anfc_0.083deg_PT3H-i_1740646698248.csv", skip = 6) %>% 
+  mutate(time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"))
+
+# Geometry: POINT (4.531135 59.274227)
+
+waveheight <-  merge(wave1, wave2, by ="time", all = TRUE)
+waveheight <- merge(waveheight, wave3, by = "time", all = TRUE)
+
+#Preparing dataframe for plotting 
+waveheight <- waveheight %>%
+  mutate(
+    time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"),
+    Year = factor(year(time)),  # Extract year as a factor
+    MonthDay = time %m+% years(-year(time) + min(year(time))),  # Remove year for plotting
+    Month = factor(month(time)) # Extract month as a factor 
+  )
+
+
+#Waveheight mean data 
+# Calculate the maximum "Sea surface wave maximum height (VCMX) m" per month 
+waveheight_max_vcmx <- waveheight %>%
+  group_by(Month) %>%
+  summarise(max_vcmx = max(VCMX, na.rm = TRUE)) %>%
+  ungroup()
+
+# Join back to waveheight data by month 
+waveheight <- waveheight %>%
+  left_join(waveheight_max_vcmx, by = "Month")
+
+#KG_Oct_meandat <- KG_Oct %>% 
+ # group_by(Date) %>% 
+  #summarize(mean_area = mean(Area, na.rm = TRUE), 
+   #         sd_area = sd(Area, na.rm = TRUE),
+    #        mean_DW = mean(DW, na.rm = TRUE), 
+     #       sd_DW = sd(DW, na.rm = TRUE))
+```
+
+```{r}
+## Variable: 
+# Sea surface wave significant height (VHM0) m
+# Sea surface wave maximum height (VCMX) m
+# Sea surface primary swell wave significant height (VHM0_SW1) m
+
+ggplot() +
+  geom_line(data = waveheight, aes(x = MonthDay, y = VHM0, color = Year, group = Year), alpha = 3) +
+  geom_point(data = waveheight, aes(x = MonthDay, y = VCMX, color = Year, group = Year), alpha = 0.1) + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") + 
+  theme_minimal() +
+  labs(title = "Utsira windpark (4.531135 59.274227)", x = "Month", y = "Waveheight (m)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+## Variable: 
+# Sea surface wave significant height (VHM0) m
+# Sea surface wave maximum height (VCMX) m
+# Sea surface primary swell wave significant height (VHM0_SW1) m
+
+
+ggplot(waveheight, aes(factor(Month, levels = 1:12, labels = month.abb), y = VHM0, fill = max_vcmx)) +
+  geom_violin(trim = FALSE) +  
+  scale_fill_gradient(low = "#A7D3E5", high = "#07415B", 
+                      guide = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(), 
+    legend.position = "bottom",  
+    legend.direction = "horizontal", 
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) +
+  labs(x = "", 
+       y = "Significant wave height (m)", 
+       fill = "Maximum wave height (m)")
+
+ggsave("plots/wave_height.jpg", width = 6, height = 4, dpi = 300)
+```
+
+title = "Distribution of Significant Wave Heights at Utsira Windpark by Month",\
+
+```{r}
+#mean significant wave height per month 
+
+mean_SWH <- waveheight %>% 
+  group_by(Month) %>% 
+  summarise(mean = mean(VHM0, na.rm = TRUE))
+```
+
+### Current Rose
+
+```{r}
+library(openair)
+```
+
+```{r}
+utsira_val <- read.delim('DATA_UTSIRA/utsira_hourly_vars.txt', sep="\t", header=TRUE, stringsAsFactors=FALSE)
+#light_aust$datetime <- ymd_hms(light_aust$datetime, tz = "UTC")
+
+library(lubridate)
+
+# Read the datetime as character
+utsira_val$datetime <- as.character(utsira_val$datetime)
+
+# Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS"
+utsira_val$datetime <- ifelse(nchar(utsira_val$datetime) == 10, 
+                              paste0(utsira_val$datetime, " 00:00:00"), 
+                              utsira_val$datetime)
+
+# Convert to POSIXct
+utsira_val$datetime <- as.POSIXct(utsira_val$datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+```
+
+```{r}
+#U is the velocity toward east and V is the velocity toward north
+
+
+utsira_val <- utsira_val %>%
+  mutate(
+    speed = sqrt(u^2 + v^2),                     # Current speed in m/s
+    direction = (atan2(v, u) * 180 / pi) + 180   # Compass degrees
+  ) %>% 
+  filter(month(datetime)%in% c(10, 11, 12, 1,2,3,4,5))
+
+blue_colors <- colorRampPalette(c("#A7D3E5","#5BA3BB", "#39738D", "#07415B"))(8)
+
+#speed_breaks <- seq(0, ceiling(max(utsira_val$speed, na.rm = TRUE)), by = 0.05)
+speed_breaks <- c(0, 0.025, 0.05, 0.1, 0.2, 0.4, 0.5, Inf)
+
+windRose(utsira_val, 
+         ws = "speed", 
+         wd = "direction",
+         angle = 10,
+         breaks = speed_breaks,
+         cols = blue_colors,          
+         grid.line = list(col = "gray90"), 
+         key.position = "right",     # legend position 
+         key.header = "Current Speed (m/s)",  
+         #main = "Current Speed and Direction at Utsira Nord Central Point", 
+         paddle = FALSE,              
+         border = "white"   
+)
+
+ggsave("plots/current_rose.jpg", width = 6, height = 4, dpi = 300)
+
+#max_current <- max(utsira_val$speed)
+```
