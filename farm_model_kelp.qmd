@@ -1,0 +1,1802 @@
+---
+title: "farm_model_kelp"
+format: html
+editor: visual
+---
+
+## Load libraries
+
+```{r}
+#data handling
+require(dplyr)
+library(lubridate)
+library(data.table)
+library(Metrics)
+require(ggpubr)
+library(pracma)
+require(deSolve)
+options(warn=-1)
+
+library(tidyr)
+library(here) #sets working directory
+library(readxl)
+library(readr)
+
+#Visuals 
+require(ggplot2)
+library(patchwork)
+library(reshape2)
+
+#Required for model runs
+source("SolveR_R.R")
+source("KelpDEB_model_Venolia.R")
+source("DEB_params.R") # this script store the parameters for easy tracking.
+#source("calibration_kelp.R")
+source("farm_run.R") #with a single line of kelp
+source("farm_run_nlines2.R") #with multiple lines of kelp 
+
+
+```
+
+## Parameters
+
+```{r}
+pars <- load_pars()
+params_Lo <- pars$p
+formatted <- format(pars$params, digits=2)
+knitr::kable(formatted[,2:5], caption='Kelp DEB Parameter list')
+remove(formatted)
+```
+
+```{r}
+
+w_O <- pars$w_O
+
+#define molecular weights
+w_V <- w_O[3]   # g/mol       #molecular weight of structure
+w_EN <- w_O[4]  # g/mol       #molecular weight of N reserve
+w_EC <- w_O[5]  # g/mol       #molecular weight of C reserve
+w_O2 <- 31.998  # g/mol       #molecular weight of O2 
+w_C <- 12.011   # g/mol       #molecular weight of C
+w_N <- 14.007   # g/mol       #molecular weight of N
+
+```
+
+## Farm Parameters
+
+These parameters account for the design of the longlines (distance between longlines, depth of the lines, length of the longline) and for the initial status of the population
+
+```{r}
+
+
+#temporary to make it easy to find where to change initial values 
+W_initial <- 2.29792e-05 #initial DW october dep #g DW 
+#W_initial <- 0.05 #g DW 
+m_EC_initial <- 0.03 #mol C/molM_V  #Reserve density of C reserve (initial mass of C reserve per intital mass of structure) #Johansson
+m_EN_initial <- 0.01 #mol N/molM_V #Reserve density of N reserve (initial mass of N reserve per intital mass of structure) #Johansson
+M_V_initial <- W_initial/(w_V+m_EN_initial*w_EN+m_EC_initial*w_EC) 
+```
+
+```{r}
+### Farm parameters ### 
+# changes the design of the farm 
+
+# A: Longlines
+farms_pars_A <- list(
+  ## Farm parameters 
+  height = 0.5, # m, height of farm box 
+  longline = 200, # m, length of lines 
+  nbox = 100, # -, number of subdivisions along the longline, #number of 'boxes' on longline. 50 boxes on a 50 meter line: 1 box = 1 m
+  width = 2, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 200, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 1, #Farm design code, 
+  depth_change = TRUE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+
+# B: Vertical 
+farms_pars_B <- list(
+  ## Farm parameters 
+  height = 2, # m, height of farm box 
+  longline = 200, # m, length of lines 
+  nbox = 100, # -, number of subdivisions along the longline, #number of 'boxes' on longline. 50 boxes on a 50 meter line: 1 box = 1 m
+  width = 2, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 250, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 2, #Farm design code, 
+  depth_change = FALSE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+
+# C: Horizontal 5-line
+farms_pars_C <- list(
+  ## Farm parameters 
+  height = 2.5, # m, height of farm box 
+  longline = 200, # m, length of lines 
+  nbox = 100, # -, number of subdivisions along the longline, #number of 'boxes' on longline. 50 boxes on a 50 meter line: 1 box = 1 m
+  width = 4, # m, distance between longlines
+  nlines = 25, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 180, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 3, #Farm design code, 
+  depth_change = FALSE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+# D: Net cultivation
+farms_pars_D <- list(
+  ## Farm parameters 
+  height = 3, # m, height of farm box 
+  longline = 200, # m, length of lines 
+  nbox = 100, # -, number of subdivisions along the longline, #number of 'boxes' on longline. 50 boxes on a 50 meter line: 1 box = 1 m
+  width = 4, # m, distance between longlines
+  nlines = 25, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 328, # ind/m^3
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 4, #Farm design code, 
+  depth_change = FALSE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+```
+
++-----------+-------------------------+-----------+-----------+--------------+
+| Farm\     | System                  | Height    | Density   | depth change |
+| Design    |                         |           |           |              |
+|           |                         |           | (unit)    |              |
+| Code      |                         |           |           |              |
++===========+=========================+===========+===========+==============+
+| 1         | Longline system         |           |           | TRUE /FALSE  |
++-----------+-------------------------+-----------+-----------+--------------+
+| 2         | Vertical line system    |           |           | FALSE        |
++-----------+-------------------------+-----------+-----------+--------------+
+| 3         | Horizontal 5-line setup |           |           | FALSE        |
++-----------+-------------------------+-----------+-----------+--------------+
+| 4         | Net system              |           |           | FALSE        |
++-----------+-------------------------+-----------+-----------+--------------+
+|           |                         |           |           |              |
++-----------+-------------------------+-----------+-----------+--------------+
+
+## Load environmental data
+
+Forcing :
+
+datetime (Posixct ), hours (0-\>) , temperature (kelvin), I (Irradiance in PAR ), N (Nitritt and Nitrate mol/L), CO2 (mol /L), speed (current m/s)
+
+```{r}
+
+# 3 m 
+forcings_farmloc_3 <- read_csv("data/forcings_farmloc_3m.csv") %>% 
+  mutate(CO_2 = 0.00214)
+
+# 6 m 
+forcings_farmloc_6 <- read_csv("data/forcings_farmloc_6m.csv") %>% 
+  mutate(CO_2 = 0.00214)
+
+# 9 m 
+forcings_farmloc_9 <- read_csv("data/forcings_farmloc_9m.csv") %>% 
+  mutate(CO_2 = 0.00214)
+
+#forcings <- forcings[forcings$datetime >= as.POSIXct("2019-10-31", tz = "UTC"), ]
+
+forcings <- forcings_farmloc_3
+forcings <- forcings[forcings$datetime >= as.POSIXct("2019-11-01", tz = "UTC"), ]
+head(forcings)
+```
+
+# RUN farms
+
++--------------+-------------------------+
+| 1            | Longline system         |
++--------------+-------------------------+
+| 2            | Vertical line system    |
++--------------+-------------------------+
+| 3            | Horizontal 5-line setup |
++--------------+-------------------------+
+| 4            | Net system              |
++--------------+-------------------------+
+
+```{r}
+source("farm_run_nlines2.R")
+
+'forcings_test <- forcings[forcings$datetime >= as.POSIXct("2020-04-21", tz = "UTC"), ]'
+
+# Longline
+farm_A <- farm_run_nlines(pars=params_Lo, farms_pars=farms_pars_A, forcings=forcings)
+
+# Vertical
+farm_B <- farm_run_nlines(pars=params_Lo, farms_pars=farms_pars_B, forcings=forcings)
+
+# Horizontal 5-line
+farm_C <- farm_run_nlines(pars=params_Lo, farms_pars=farms_pars_C, forcings=forcings)
+
+# Net 
+farm_D <- farm_run_nlines(pars=params_Lo, farms_pars=farms_pars_D, forcings=forcings)
+```
+
+```{r}
+farms_colors <- c(
+  "Longline" = "#0273B3", 
+  "Vertical line" = "#D46004",
+  "Horizontal 5-line" = "#0EA47A", 
+  "Net" = "#C33C4C"
+)
+```
+
+## Plot farm results
+
+```{r}
+get_average_weight <- function(farm, name) {
+  t <- dim(farm$W)[3]
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, 1:(t - 1) ]),
+    average_weight = apply(farm$W[, , 1:(t - 1)], 3, mean),
+    farm = name
+  )
+}
+
+df_weight <- bind_rows(
+  get_average_weight(farm_A, "Longline"),
+  get_average_weight(farm_B, "Vertical line"),
+  get_average_weight(farm_C, "Horizontal 5-line"),
+  get_average_weight(farm_D, "Net")
+)
+
+df_weight$farm <- factor(df_weight$farm, levels = c("Longline", "Vertical line", "Horizontal 5-line", "Net"))
+
+average_weight <- ggplot(df_weight, aes(x = datetime, y = average_weight, color = farm)) +
+  geom_line(size = 1.2) +
+  #facet_wrap(~ farm, scales = "free_x") +
+  labs(title = "", 
+       x = "", 
+       y = "Mean Dry Weight (g)", 
+       color = "Farm System") +
+  scale_color_manual(values = farms_colors) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month") + 
+  coord_cartesian(
+    xlim = as.POSIXct(c("2019-11-01", "2020-04-30"), tz = "UTC") )
+
+
+zoomed <- average_weight +
+  coord_cartesian(
+    xlim = as.POSIXct(c("2020-04-28", "2020-04-30"), tz = "UTC"),
+    ylim = c(10, 12)  
+  ) +
+  scale_x_datetime(date_breaks = "1 day", date_labels = "%b %d") +
+  theme(legend.position = "none") +
+  ylab(NULL)
+
+
+
+average_weight + zoomed
+
+#ggsave("plots/farms_averageW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+get_total_biomass <- function(farm, name) {
+  t <- dim(farm$BM)[3]
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, 1:(t - 1) ]),
+    total_biomass = apply(farm$BM[, , 1:(t - 1)], 3, sum) /1000000,
+    farm = name
+  )
+}
+
+df_biomass <- bind_rows(
+  get_total_biomass(farm_A, "Longline"),
+  get_total_biomass(farm_B, "Vertical line"),
+  get_total_biomass(farm_C, "Horizontal 5-line"),
+  get_total_biomass(farm_D, "Net")
+)
+
+df_biomass$farm <- factor(df_biomass$farm, levels = c("Longline", "Vertical line", "Horizontal 5-line", "Net"))
+
+ggplot(df_biomass, aes(x = datetime, y = total_biomass, color = farm)) +
+  geom_line(size = 1.2) +
+  labs(title = "", 
+       x = "", 
+       y = "Total Biomass in DW (metric ton)", 
+       color = "Farm System") +
+  scale_color_manual(values = farms_colors) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month") 
+
+#ggsave("plots/farms_biomass.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+get_yield <- function(farm, name, farms_pars) {
+  t <- dim(farm$BM)[3]
+  area <- farms_pars$longline * farms_pars$nlines * farms_pars$width
+  total_biomass <- sum(farm$BM[, , t - 1]) /1000 #from grams to kg
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, (t - 1) ]),
+    yield = total_biomass / area,
+    farm = name
+  )
+}
+
+df_yield <- bind_rows( #In kg DW/m2
+  get_yield(farm_A, "Longline", farms_pars_A),
+  get_yield(farm_B, "Vertical line", farms_pars_B),
+  get_yield(farm_C, "Horizontal 5-line", farms_pars_C),
+  get_yield(farm_D, "Net", farms_pars_D)
+) 
+```
+
+```{r}
+
+#Ingested nutrients 
+get_ingested_carbon <- function(farm, name) {
+  t <- dim(farm$ingested_carbon)[3]
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, 1:(t - 1) ]),
+    total_ingested_carbon = apply(farm$ingested_carbon[, , 1:(t - 1)], 3, sum) * w_C,
+    farm = name
+  )
+}
+
+df_ingested_carbon <- bind_rows(
+  get_ingested_carbon(farm_A, "Longline"),
+  get_ingested_carbon(farm_B, "Vertical line"),
+  get_ingested_carbon(farm_C, "Horizontal 5-line"),
+  get_ingested_carbon(farm_D, "Net")
+)
+
+df_ingested_carbon$farm <- factor(df_ingested_carbon$farm, levels = c("Net", "Horizontal 5-line", "Vertical line" ,"Longline"))
+
+get_ingested_nitrogen <- function(farm, name) {
+  t <- dim(farm$ingested_nitrogen)[3]
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, 1:(t - 1) ]),
+    total_ingested_nitrogen = apply(farm$ingested_nitrogen[, , 1:(t - 1)], 3, sum) * w_N,
+    farm = name
+  )
+}
+
+df_ingested_nitrogen <- bind_rows(
+  get_ingested_nitrogen(farm_A, "Longline"),
+  get_ingested_nitrogen(farm_B, "Vertical line"),
+  get_ingested_nitrogen(farm_C, "Horizontal 5-line"),
+  get_ingested_nitrogen(farm_D, "Net")
+)
+
+df_ingested_nitrogen$farm <- factor(df_ingested_nitrogen$farm, levels = c("Net", "Horizontal 5-line", "Vertical line" ,"Longline"))
+
+### PLOT 
+
+ingested_carbon <- ggplot(df_ingested_carbon, aes(x = datetime, y = total_ingested_carbon, color = farm)) +
+  geom_line() +
+  labs(title = "", 
+       x = "", 
+       y = "Ingested Carbon (g)", 
+       color = "Farm System") +
+  scale_color_manual(values = farms_colors) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+ingested_nitrogen <- ggplot(df_ingested_nitrogen, aes(x = datetime, y = total_ingested_nitrogen, color = farm)) +
+  geom_line() +
+  labs(title = "", 
+       x = "", 
+       y = "Ingested Nitrogen (g)", 
+       color = "Farm System") +
+  scale_color_manual(values = farms_colors) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+## 
+ingested_carbon / ingested_nitrogen
+
+#ggsave("plots/farms_ingested.jpg", width = 4, height = 8, dpi = 300)
+
+df_total_ingested <- df_ingested_nitrogen |>
+  group_by(farm) |>
+  summarise(
+    total_N = sum(total_ingested_nitrogen, na.rm = TRUE) /1000  # to kg 
+  ) |>
+  left_join(
+    df_ingested_carbon |>
+      group_by(farm) |>
+      summarise(total_C = sum(total_ingested_carbon, na.rm = TRUE) /1000) ,  # to kg 
+    by = "farm"
+  )
+
+
+```
+
+```{r}
+get_weight_boxes <- function(farm, name) {
+  t <- dim(farm$W)[3]
+  n_boxes <- dim(farm$W)[1]
+  weights <- farm$W[, 2, t - 1]
+  data.frame(
+    datetime = as.POSIXct(farm$datetime[1, 1, (t - 1) ]),
+    weight = weights,
+    box = 1:n_boxes,
+    farm = name
+  )
+}
+
+df_weight_boxes <- bind_rows(
+  get_weight_boxes(farm_A, "Longline"),
+  get_weight_boxes(farm_B, "Vertical line"),
+  get_weight_boxes(farm_C, "Horizontal 5-line"),
+  get_weight_boxes(farm_D, "Net")
+)
+
+df_weight_boxes$farm <- factor(df_weight_boxes$farm, levels = c("Longline", "Vertical line", "Horizontal 5-line", "Net"))
+
+ggplot(df_weight_boxes, aes(x = box *2, y = weight, color = farm)) +
+  geom_line(size = 1.2) +
+  labs(title = "", 
+       x = "Length along longline (m)", 
+       y = "Dry weight (g)", 
+       color = "Farm System") +
+  scale_color_manual(values = farms_colors) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.4, 0.7),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) 
+
+#ggsave("plots/farms_lineweight.jpg", width = 8, height = 4, dpi = 300)
+```
+
+### Plot kelp Area - OLD
+
+```{r}
+# Extract the area data (3D array: nbox x nlines x time_steps)
+
+
+area_data <- farm_A$K_area  
+
+# Get dimensions
+nbox <- dim(area_data)[1]        # Number of boxes
+nlines <- dim(area_data)[2]      # Number of longlines
+time_steps <- dim(area_data)[3]  # Number of time steps
+
+# Convert the 3D array into a long-format data frame
+A_long <- as.data.frame.table(area_data) %>%
+  rename(box = Var1, line = Var2, time = Var3, A = Freq) %>%  # Rename columns
+  mutate(box = as.integer(box), 
+         line = as.integer(line), 
+         time = as.integer(time)) %>%  # Convert factors to integers
+  mutate(datetime = rep(farm_A$datetime, length.out = nrow(.))) %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%d/%m/%Y %H:%M:%S"))  # Convert to POSIXct for plotting
+
+# Seperate colours for lines and line marker for boxes 
+longline_colors2 <- setNames(RColorBrewer::brewer.pal(nlines, "Set1"), unique(A_long$line))
+color_mapping <- c(longline_colors2)
+
+longline_colors <- setNames(RColorBrewer::brewer.pal(nlines, "Set1"), unique(A_long$line))
+color_mapping <- c(longline_colors, "Austevoll October" = "black")
+
+
+# Plotting area over time with datetime
+ggplot() +
+  geom_line(data =A_long, aes(x = datetime, y = A, color = factor(line), group = interaction(line, box), linetype = factor(box))) + 
+  labs(
+    title = "Area of Individual Kelp per Box & Longline", 
+    x = "Time", 
+    y = "Area (cm2)", #Frond area
+    color = "Longline", 
+    linetype = "Box"
+  ) +
+  ### Add Austevoll Growth Data
+  geom_point(data = KG_Oct_meandat, aes(x = Date, y = mean_area, colour = "Austevoll October"), shape = 'diamond', size = 3) + 
+  geom_errorbar(data = KG_Oct_meandat, aes(x = Date, ymin = mean_area - sd_area, ymax = mean_area + sd_area, colour = "Austevoll October"), width = 1) + 
+  
+  ## Theme 
+  theme_minimal() +
+  scale_x_datetime(date_labels = "%b %d", date_breaks = "1 month") +  # Format the x-axis with monthly ticks
+
+  # Custom color palette (distinguish between longlines)
+ scale_color_manual(values = color_mapping) +  # Assign unique colors to each line
+
+  # Adjust legend and appearance
+  theme(
+    legend.position = "bottom",
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 8)
+  )  
+  
+```
+
+### Plot other outputs (for testing model )
+
+```{r}
+# Extract the area data (3D array: nbox x nlines x time_steps)
+other_data <- farm_run_test_nlines$poc_carbon
+
+# Get dimensions
+nbox <- dim(area_data)[1]        # Number of boxes
+nlines <- dim(area_data)[2]      # Number of longlines
+time_steps <- dim(area_data)[3]  # Number of time steps
+
+# Convert the 3D array into a long-format data frame
+other_long <- as.data.frame.table(other_data) %>%
+  rename(box = Var1, line = Var2, time = Var3, Xx = Freq) %>%  # Rename columns
+  mutate(box = as.integer(box), 
+         line = as.integer(line), 
+         time = as.integer(time)) %>%  # Convert factors to integers
+  mutate(datetime = rep(farm_run_test_nlines$datetime, length.out = nrow(.))) %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%d/%m/%Y %H:%M:%S"))  # Convert to POSIXct for plotting
+
+#seperate colours for lines and line marker for boxes 
+longline_colors2 <- setNames(RColorBrewer::brewer.pal(nlines, "Set1"), unique(A_long$line))
+color_mapping <- c(longline_colors2)
+
+
+# Plotting area over time with datetime
+ggplot() +
+  geom_line(data =other_long, aes(x = datetime, y = Xx, color = factor(box), group = interaction(line, box))) + 
+  labs(
+    title = "Carbon (DIC) ", 
+    x = "Time", 
+    y = "mol /L", 
+    color = "Box" #, linetype = "Box"
+  ) +
+  
+  ## Theme 
+  theme_minimal() +
+  scale_x_datetime(date_labels = "%b %d", date_breaks = "1 month") +  # Format the x-axis with monthly ticks
+
+  # Custom color palette (distinguish between longlines)
+ scale_color_manual(values = color_mapping) +  # Assign unique colors to each line
+
+  # Adjust legend and appearance
+  theme(
+    legend.position = "bottom",
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 8)
+  ) 
+```
+
+## Ingested nutrients (test)
+
+```{r}
+farm_run_test_nlines <- farm_A
+
+# Extract necessary data
+ingested_carbon <- farm_run_test_nlines$ingested_carbon #mol C 
+ingested_nitrogen <- farm_run_test_nlines$ingested_nitrogen #mol N 
+
+#ingested <- merge(ingested_carbon, ingested_carbon)
+
+# get date and Convert to POSIXct
+datetime <- farm_run_test_nlines$datetime 
+datetime <- as.POSIXct(datetime, format="%d/%m/%Y %H:%M:%S", tz="UTC")
+
+# Get dimensions
+nbox <- dim(area_data)[1]        # Number of boxes
+nlines <- dim(area_data)[2]      # Number of longlines
+time_steps <- dim(area_data)[3]  # Number of time steps
+
+# Convert the 3D array into a long-format data frame
+ingestedC_long <- as.data.frame.table(ingested_carbon) %>%
+  rename(box = Var1, line = Var2, time = Var3, C = Freq) %>%  # Rename columns
+  mutate(box = as.integer(box), 
+         line = as.integer(line), 
+         time = as.integer(time)) %>%  # Convert factors to integers
+  mutate(datetime = rep(farm_run_test_nlines$datetime, length.out = nrow(.))) %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%d/%m/%Y %H:%M:%S")) %>%   # Convert to POSIXct for plotting 
+  mutate(Day = as_date(datetime)) %>% 
+  group_by(Day) %>% 
+  summarise(sum_C = sum(C), na.rm = TRUE)
+
+ingestedN_long <- as.data.frame.table(ingested_nitrogen) %>%
+  rename(box = Var1, line = Var2, time = Var3, N = Freq) %>%  # Rename columns
+  mutate(box = as.integer(box), 
+         line = as.integer(line), 
+         time = as.integer(time)) %>%  # Convert factors to integers
+  mutate(datetime = rep(farm_run_test_nlines$datetime, length.out = nrow(.))) %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%d/%m/%Y %H:%M:%S")) %>%   # Convert to POSIXct for plotting 
+  mutate(Day = as_date(datetime)) %>% 
+  group_by(Day) %>% 
+  summarise(sum_N = sum(N), na.rm = TRUE)
+
+
+
+
+####
+
+# Total ingested over the entire simulation
+ingested_carbon_tot <- sum(ingestedC_long$sum_C, na.rm = TRUE) #mol C
+ingested_nitrogen_tot <- sum(ingestedN_long$sum_N, na.rm = TRUE) #mol N 
+
+
+# Print results
+print(list(
+  ingested_carbon_tot = ingested_carbon_tot,
+  ingested_nitrogen_tot = ingested_nitrogen_tot
+))
+
+ingested_list <- c(
+  "Carbon   (mol)" = ingested_carbon_tot, 
+  "Nitrogen (mol)" = ingested_nitrogen_tot,
+  "Carbon   (g)" = ingested_carbon_tot * w_C, #TODO: 
+  "Nitrogen (g)" = ingested_nitrogen_tot * w_N #TODO: 
+)
+
+print(knitr::kable(ingested_list,caption = "Total Ingested Nutrients by Kelp Farm"))
+
+ggplot(ingestedC_long, aes(x = Day, y = sum_C)) +
+  geom_line(color = "black", linewidth = 1) +
+  labs(
+    title = "Daily Ingested Carbon by Kelp Farm",
+    x = "Time",
+    y = "Ingested Carbon (mol C)",
+    color = "Carbon"
+  ) +
+  theme_minimal()
+
+ggplot(ingestedN_long, aes(x = Day, y = sum_N)) +
+  geom_line(color = "pink", linewidth = 1) +
+  labs(
+    title = "Daily Ingested Nitrogen by Kelp Farm",
+    x = "Time",
+    y = "Ingested Nitrogen (mol N)",
+    color = "Nitrogen"
+  ) +
+  theme_minimal() 
+
+```
+
+## Biomass of Kelp farm (test)
+
+```{r}
+# Extract necessary data
+BM <- farm_run_test_nlines$BM
+
+# get date and Convert to POSIXct
+datetime <- farm_run_test_nlines$datetime 
+datetime <- as.POSIXct(datetime, format="%d/%m/%Y %H:%M:%S", tz="UTC")
+
+# Get dimensions
+nbox <- dim(area_data)[1]        # Number of boxes
+nlines <- dim(area_data)[2]      # Number of longlines
+time_steps <- dim(area_data)[3]  # Number of time steps
+
+# Convert the 3D array into a long-format data frame
+BM_long <- as.data.frame.table(BM) %>%
+  rename(box = Var1, line = Var2, time = Var3, BM = Freq) %>%  # Rename columns
+  mutate(box = as.integer(box), 
+         line = as.integer(line), 
+         time = as.integer(time)) %>%  # Convert factors to integers
+  mutate(datetime = rep(farm_run_test_nlines$datetime, length.out = nrow(.))) %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%d/%m/%Y %H:%M:%S")) %>%   # Convert to POSIXct for plotting 
+  filter(lubridate::hour(datetime) == 23) %>%  #filtering for all the values at the time 23:00:00. Last biomass of the day
+  mutate(Day = as_date(datetime)) %>% 
+  group_by(Day) %>% 
+  summarise(sum_BM = sum(BM), na.rm = TRUE)
+
+#Final Biomass of kelp farm in grams. 
+final_BM <- last(BM_long$sum_BM)
+
+
+Biomass_list <- c(
+  "Dry weight  (kg)" = final_BM/1000, 
+  "Wet weight (kg)" = (final_BM / pars$p["DM"]) / 1000
+)
+
+print(knitr::kable(Biomass_list,caption = "Total Biomass harvested"))
+  
+ggplot(BM_long, aes(x = Day, y = sum_BM/1000)) +
+  geom_line(color = "darkgreen", linewidth = 1) +
+  labs(
+    title = "Biomass of Kelp farm (DW)",
+    x = "Time",
+    y = "Biomass (kg) (DW)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#Biomass per area 
+farm_m2 <- farms_pars$longline * (farms_pars$width * farms_pars$nlines) #m2 of the farm area 
+
+rope_totL <- farms_pars$longline * farms_pars$nlines #total length of rope/longline in farm
+farm_ha <- farm_m2 / 10000 #Hectars (1 ha = 10 000 m2)
+
+final_BM_WW <- final_BM / 0.14 #final biomass in grams WW 
+
+#kg = g/1 000
+#tonnes = g / 1 000 000
+  
+biomass_yield <- c(
+  "g / m2 (DW)" = final_BM / farm_m2, 
+  "g / m2 (WW)" = final_BM_WW / farm_m2, 
+  "kg / m2 (WW)" = (final_BM_WW/1000) / farm_m2,
+  "t / ha (WW)" =  (final_BM_WW/1000000) / farm_ha,
+  "kg / m rope (WW)" = (final_BM_WW / 1000) / rope_totL
+)
+
+print(knitr::kable(biomass_yield,caption = "Biomass Yield"))
+```
+
+## Plot: nutrient concentration through the farm line
+
+```{r}
+#Lower Flow forcing on the last day at noon (timestep 4525)
+forcings_LF <- forcings %>%
+  mutate(speed = replace(speed, 4525, 0.005))
+
+FR_LF <- farm_run_nlines(params_Lo, farm_pars, forcings_LF)
+
+#Higher Flow forcing on the last day at noon (timestep 4525)
+forcings_HF <- forcings %>%
+  mutate(speed = replace(speed, 4525, 0.4))
+
+FR_HF <- farm_run_nlines(params_Lo, farm_pars, forcings_HF)
+```
+
+```{r}
+time_step_to_plot <- 4525  # Choose a timestep within the range
+line_number <- 2 #choose a line number to plot 
+
+#LOW FLOW 
+# Extract the 2D slice (columns (nbox) x rows(nlines)) at the chosen timestep
+poc_nitrogen_LF <- 
+  FR_LF$poc_nitrogen[,, time_step_to_plot] 
+poc_carbon_LF <- 
+  FR_LF$poc_carbon[,, time_step_to_plot] #POC Carbon
+
+current_LF <- 
+  FR_LF$current[,, time_step_to_plot]  # current speed
+
+df_N_LF <- as.data.frame(as.table(poc_nitrogen_LF)) %>%
+  setNames(c("Box", "Line", "POC_Nitrogen")) %>%
+  mutate(across(everything(), as.numeric))
+
+df_C_LF <- as.data.frame(as.table(poc_carbon_LF)) %>%
+  setNames(c("Box", "Line", "POC_Carbon")) %>%
+  mutate(across(everything(), as.numeric))
+
+df_speed_LF <- as.data.frame(as.table(current_LF)) %>%
+  setNames(c("Box", "Line", "Current")) %>%
+  mutate(across(everything(), as.numeric))
+
+## Final dataframe for low flow 
+df_LF <- left_join(df_N_LF, df_C_LF, by = c("Line", "Box")) %>% 
+  left_join(df_speed_LF,by = c("Line", "Box")) %>% 
+  filter(Line == line_number) %>% 
+  mutate(Flow = "Low")
+
+#HIGH FLOW 
+# Extract the 2D slice (columns (nbox) x rows(nlines)) at the chosen timestep
+poc_nitrogen_HF <- 
+  FR_HF$poc_nitrogen[,, time_step_to_plot] 
+poc_carbon_HF <- 
+  FR_HF$poc_carbon[,, time_step_to_plot] #POC Carbon
+
+current_HF <- 
+  FR_HF$current[,, time_step_to_plot]  # current speed
+
+df_N_HF <- as.data.frame(as.table(poc_nitrogen_HF)) %>%
+  setNames(c("Box", "Line", "POC_Nitrogen")) %>%
+  mutate(across(everything(), as.numeric))
+
+df_C_HF <- as.data.frame(as.table(poc_carbon_HF)) %>%
+  setNames(c("Box", "Line", "POC_Carbon")) %>%
+  mutate(across(everything(), as.numeric))
+
+df_speed_HF <- as.data.frame(as.table(current_HF)) %>%
+  setNames(c("Box", "Line", "Current")) %>%
+  mutate(across(everything(), as.numeric))
+
+## Final dataframe for low flow 
+df_HF <- left_join(df_N_HF, df_C_HF, by = c("Line", "Box")) %>% 
+  left_join(df_speed_HF,by = c("Line", "Box")) %>% 
+  filter(Line == line_number) %>% 
+  mutate(Flow = "Hight")
+
+
+
+#Combined LF and HF 
+```
+
+```{r}
+#Colour scaling 
+max_poc_nitrogen <- max(forcings$N, na.rm = TRUE)
+max_poc_carbon <- max(forcings$CO_2, na.rm = TRUE)
+max_current <- 1
+```
+
+```{r}
+#Combined LF and HF 
+df_N <- bind_rows(
+  df_LF %>% select(Flow, Box, POC_Nitrogen),
+  df_HF %>% select(Flow, Box, POC_Nitrogen)
+)
+
+# Create the concentration map
+ggplot(df_N, aes(x = Flow, y = Box, fill = POC_Nitrogen)) +
+  geom_tile(colour="white") + 
+  scale_fill_gradient(low = "lightgray", high = "violetred3", name = "POC Nitrogen") +
+  theme_minimal() +
+  coord_fixed() +  # square grid
+  labs(title = paste("POC Nitrogen along longline", line_number, "at Timestep", time_step_to_plot),
+       x = "Box Number",
+       y = "Flow") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12),
+        axis.ticks = element_blank(), 
+        panel.grid = element_blank(),
+        legend.position = "right") 
+```
+
+```{r}
+
+```
+
+```{r}
+
+time_step_to_plot <- 4525  # Choose a timestep within the range
+#line_number <- 2 #choose a line number to plot 
+
+# Extract the 2D slice (columns (nbox) x rows(nlines)) at the chosen timestep
+poc_nitrogen_matrix <- 
+  farm_run_test_nlines$poc_nitrogen[,, time_step_to_plot] #POC Nitrogen
+poc_carbon_matrix <- 
+  farm_run_test_nlines$poc_carbon[,, time_step_to_plot] #POC Carbon 
+
+# Convert matrix into a dataframe
+df_N <- as.data.frame(as.table(poc_nitrogen_matrix)) %>%
+  setNames(c("Box", "Line", "POC_Nitrogen")) %>%
+  mutate(across(everything(), as.numeric))
+
+df_C <- as.data.frame(as.table(poc_carbon_matrix))  
+colnames(df_C) <- c("Box", "Line", "POC_Carbon")  
+
+# Current speed
+current_matrix <- 
+  farm_run_test_nlines$current[,, time_step_to_plot]  # current speed
+flow_start <- current_matrix[1, 1]  # First box
+flow_end <- current_matrix[nrow(current_matrix), ncol(current_matrix)]  # Last box
+
+
+# Create the concentration map
+ggplot(df_N, aes(x = Box, y = Line, fill = POC_Nitrogen)) +
+  geom_tile(colour="white") + 
+  scale_fill_gradient(low = "gray", high = "violetred3", name = "POC Nitrogen") +
+  theme_minimal() +
+  coord_fixed() +  # Ensures square grid
+  labs(title = paste("POC Nitrogen at Timestep", time_step_to_plot),
+       x = "Box Number",
+       y = "Longline Number") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12),
+        axis.ticks = element_blank(), 
+        panel.grid = element_blank(),
+        legend.position = "right") 
+
+```
+
+\
+
+# Scenarios flow
+
+```{r}
+forcings <- forcings[forcings$datetime >= as.POSIXct("2019-10-31", tz = "UTC"), ]
+
+forcings_Ref <- forcings %>% 
+  mutate(speed = abs(speed))
+
+forcings_LowFlow <- forcings %>% 
+  mutate(speed = 0.075)
+
+forcings_MedFlow <- forcings %>% 
+  mutate(speed = 0.15)
+
+forcings_HightFlow <- forcings %>% 
+  mutate(speed = 0.3)
+
+```
+
+```{r}
+# A: Longlines
+# Farm parameters for scenarios 
+
+farms_pars_Ref <- list(
+  ## Farm parameters 
+  height = 0.5, # m, height of farm box 
+  longline = 400, # m, length of lines 
+  nbox = 200, # -, number of subdivisions along the longline
+  width = 2, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 200, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 1, #Farm design code, 
+  depth_change = TRUE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+farms_pars_D1 <- list(
+  ## Farm parameters 
+  height = 0.5, # m, height of farm box 
+  longline = 400, # m, length of lines 
+  nbox = 200, # -, number of subdivisions along the longline
+  width = 1, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 200, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 1, #Farm design code, 
+  depth_change = TRUE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+farms_pars_D3 <- list(
+  ## Farm parameters 
+  height = 0.5, # m, height of farm box 
+  longline = 400, # m, length of lines 
+  nbox = 200, # -, number of subdivisions along the longline
+  width = 3, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 200, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 1, #Farm design code, 
+  depth_change = TRUE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+```
+
+```{r}
+
+S0 <- farm_run(pars=params_Lo, farms_pars=farms_pars_Ref, forcings=forcings)
+
+S1 <- farm_run(pars=params_Lo, farms_pars=farms_pars_Ref, forcings=forcings_Ref)
+
+S2 <- farm_run(pars=params_Lo, farms_pars=farms_pars_Ref, forcings=forcings_LowFlow)
+
+S3 <- farm_run(pars=params_Lo, farms_pars=farms_pars_Ref, forcings=forcings_MedFlow)
+
+S4 <- farm_run(pars=params_Lo, farms_pars=farms_pars_Ref, forcings=forcings_HightFlow)
+
+S5 <- farm_run(pars=params_Lo, farms_pars=farms_pars_D1, forcings=forcings_Ref)
+
+S6 <- farm_run(pars=params_Lo, farms_pars=farms_pars_D3, forcings=forcings_Ref)
+```
+
+```{r}
+#Plot for S0 - S6
+
+# Store all outputs and labels
+scenarios <- list(S0, S1, S2, S3, S4, S5, S6)
+labels <- c("S0", "S1", "S2", "S3", "S4", "S5", "S6")
+'colors <- c("S0" = "black", 
+            "S1" = "#0273B3", 
+            "S2" = "#CF81AC", 
+            "S3" = "#C33C4C", 
+            "S4" = "#D46004", 
+            "S5" = "#EBB540", 
+            "S6" = "#0EA47A")'
+
+colors <- c(
+    "Reference - 2d" = "black", 
+    "Reference" = "#444444", 
+    "Low flow" = "#6DAEDB", 
+    "Medium Flow" = "#0273B3", 
+    "High Flow" = "#174A7E", 
+    "Short spacing" = "#EBB540", 
+    "Wide spacing" = "#D46004"
+) 
+
+time_vec <- as.POSIXct(forcings_Ref$datetime)
+
+plot_data <- data.frame()
+
+for (i in seq_along(scenarios)) {
+  W_mat <- scenarios[[i]]$W
+  poc_C_mat <- scenarios[[i]]$poc_carbon
+  poc_N_mat <- scenarios[[i]]$poc_nitrogen
+  current_mat <- scenarios[[i]]$current
+  
+  W_df <- as.data.frame(W_mat)
+  W_df$Box <- 1:nrow(W_df)
+  
+  poc_C_df <- as.data.frame(poc_C_mat)
+  poc_N_df <- as.data.frame(poc_N_mat)
+  current_df <- as.data.frame(current_mat)
+  poc_C_df$Box <- 1:nrow(poc_C_df)
+  poc_N_df$Box <- 1:nrow(poc_N_df)
+  current_df$Box <- 1:nrow(current_df)
+  
+  W_dt <- as.data.table(W_df)
+  poc_C_dt <- as.data.table(poc_C_df)
+  poc_N_dt <- as.data.table(poc_N_df)
+  current_dt <- as.data.table(current_df)
+  
+  temp_W <- melt(W_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "W")
+  temp_C <- melt(poc_C_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "poc_carbon")
+  temp_N <- melt(poc_N_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "poc_nitrogen")
+  temp_current <- melt(current_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "current")
+  
+  temp_df <- temp_W
+  temp_df$poc_carbon <- temp_C$poc_carbon
+  temp_df$poc_nitrogen <- temp_N$poc_nitrogen
+  temp_df$current <- temp_current$current
+  
+  temp_df$TimeIndex <- as.integer(gsub("V", "", temp_df$TimeIndex))  
+  temp_df$Time <- time_vec[temp_df$TimeIndex]
+  temp_df$Scenario <- labels[i]
+  
+  plot_data <- rbind(plot_data, temp_df)
+}
+
+plot_data$Scenario <- recode(plot_data$Scenario,
+                                 "S0" = "Reference - 2d",
+                                 "S1" = "Reference",
+                                 "S2" = "Low flow",
+                                 "S3" = "Medium Flow",
+                                 "S4" = "High Flow",
+                                 "S5" = "Short spacing",
+                                 "S6" = "Wide spacing")
+
+plot_data$Scenario <- factor(plot_data$Scenario, levels = c(
+  "Reference - 2d",
+  "Reference",
+  "Low flow",
+  "Medium Flow",
+  "High Flow",
+  "Short spacing",
+  "Wide spacing"
+))
+
+
+```
+
+```{r}
+plot_data_mean <- plot_data %>%
+  group_by(Scenario, Time) %>%
+  summarise(Mean_W = mean(W, na.rm = TRUE))  # Compute the mean of W for each Scenario and Time
+
+'plot_data_mean$Scenario <- recode(plot_data_mean$Scenario,
+                                 "S0" = "Reference - 2d",
+                                 "S1" = "Reference",
+                                 "S2" = "Low flow",
+                                 "S3" = "Medium Flow",
+                                 "S4" = "High Flow",
+                                 "S5" = "Short spacing",
+                                 "S6" = "Wide spacing")'
+
+
+# Plotting the mean weight
+ggplot(plot_data_mean, aes(x = Time, y = Mean_W, color = Scenario, group = Scenario)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = colors) +  
+  labs(
+    #title = "",
+    x = "",
+    y = "Mean Dry Weight (g)",
+    color = "Scenario"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/scenario_meanW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+
+box_data_S0 <- plot_data %>%
+  filter(Scenario == "Reference - 2d") %>%
+  mutate(Box = as.numeric(Box))
+
+
+ggplot(box_data_S0, aes(x = Time, y = W, color = Box, group = Box)) +
+  geom_line(size = 1) +
+  labs(
+    x = "",
+    y = "Dry Weight (g)",
+    color = "Box"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  scale_color_gradientn(
+    colours = c("#C6E8B2", "#0B6614", "#C6E8B2"),
+    values = scales::rescale(c(1, 100, 200)),  # Set gradient anchor points
+    guide = "colorbar"
+  )
+
+```
+
+```{r}
+boxes_of_interest <- c(1, 25, 50, 100, 150, 200) #Boxes to extract the weight from 
+
+final_weights <- data.frame()
+
+for (i in seq_along(scenarios)) {
+  W_mat <- scenarios[[i]]$W
+  final_W <- W_mat[, ncol(W_mat)]  # final timestep
+  temp_df <- data.frame(
+    Scenario = labels[i],
+    Box = seq_along(final_W),
+    Final_W = final_W
+  )
+  final_weights <- rbind(final_weights, temp_df)
+}
+
+final_weights$Scenario <- recode(final_weights$Scenario,
+                                 "S0" = "Reference - 2d",
+                                 "S1" = "Reference",
+                                 "S2" = "Low flow",
+                                 "S3" = "Medium Flow",
+                                 "S4" = "High Flow",
+                                 "S5" = "Short spacing",
+                                 "S6" = "Wide spacing")
+
+final_weights_filtered <- final_weights %>%
+  filter(Box %in% boxes_of_interest) 
+
+
+```
+
+```{r}
+
+greens <- c("#FFFFFF", "#C6E8B2", "#8FD470", "#4CAF3D", "#0B6614")
+
+ggplot(data=final_weights, aes(x = Scenario, y = Box *2, fill = Final_W)) +
+  geom_tile(color = NA) +
+  scale_fill_gradientn(
+    colors = greens,
+    name = "Final Weight\n(g DW)"
+  ) +
+  labs(
+    x = "Scenario",
+    y = "Longline length (m)" #,title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank()
+  ) +
+  geom_vline(xintercept = seq(0.5, length(unique(final_weights$Scenario)) - 0.5, by = 1), color = "white", size = 0.5)
+
+#ggsave("plots/scenario_finalW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+final_weights$Scenario <- factor(final_weights$Scenario, levels = c(
+  "Reference - 2d",
+  "Reference",
+  "Low flow",
+  "Medium Flow",
+  "High Flow",
+  "Short spacing",
+  "Wide spacing"
+))
+
+ggplot(data=final_weights, aes(y = Final_W, x = Box *2, color = Scenario)) +
+  geom_line(size = 1.2) +
+  labs(
+    y = "Final Dry Weight (g)",
+    x = "Longline length (m)" #,title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    #panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    legend.position = c(0.05, 0.9),  # Move legend to top-left
+    legend.justification = c(0.3, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_color_manual(values = colors) 
+  
+
+#ggsave("plots/scenario_finalW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+poc_data <- plot_data %>%
+  filter(Time == as.POSIXct("2020-04-30 11:00:00")) %>%
+  select(Scenario, Box, poc_nitrogen, poc_carbon, Time)
+
+magentas <- c("#FFFFFF", "#E1B9D9" , "#DA9EBF", "#CF81AC", "#9B3B70")
+
+plot_N <- ggplot(data = poc_data, aes(x = Scenario, y = Box * 2, fill = poc_nitrogen)) +
+  geom_tile(color = NA) +
+  scale_fill_gradientn(
+    colors = magentas,
+    name = expression(paste('mol N ',L^-1, sep='')), 
+    guide = guide_colorbar(
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = 15,    
+      barheight = 1,    
+      label.position = "bottom", 
+      label.theme = element_text(size = 5),
+      ticks = TRUE
+    )
+  ) +
+  labs(
+    x = "Scenario",
+    y = "Longline length (m)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "top"
+  ) +
+  geom_vline(
+    xintercept = seq(0.5, length(unique(poc_data$Scenario)) - 0.5, by = 1),
+    color = "white",
+    size = 0.5
+  )
+
+#ggsave("plots/scenario_N.jpg", width = 8, height = 4, dpi = 300)
+
+greys <- c("#D6D6D6", "#A6A6A6", "#787878", "#444444")
+
+
+plot_C <- ggplot(data = poc_data, aes(x = Scenario, y = Box * 2, fill = poc_carbon)) +
+  geom_tile(color = NA) +
+  scale_fill_gradientn(
+    colors = greys,
+    name = expression(paste('mol DIC ',L^-1, sep='')), 
+    guide = guide_colorbar(
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = 15,    
+      barheight = 1,    
+      label.position = "bottom", 
+      label.theme = element_text(size = 5),
+      ticks = TRUE
+    )
+  ) +
+  labs(
+    x = "Scenario",
+    y = "Longline length (m)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "top", 
+    axis.text.y = element_blank()
+  ) +
+  geom_vline(
+    xintercept = seq(0.5, length(unique(poc_data$Scenario)) - 0.5, by = 1),
+    color = "white",
+    size = 0.5
+  )
+#ggsave("plots/scenario_C.jpg", width = 8, height = 4, dpi = 300)
+
+#Add common 
+
+plot_N + plot_C + plot_layout(axis_titles = "collect")
+#ggsave("plots/scenario_NC.jpg", width = 12, height = 6, dpi = 300)
+```
+
+```{r}
+current_data <- plot_data %>%
+  filter(Time == as.POSIXct("2020-04-30 11:00:00")) %>%
+  select(Scenario, Box, current, Time)
+
+ggplot(data=current_data, aes(y = current, x = Box *2, color = Scenario)) +
+  geom_line(size = 1.2) +
+  labs(
+    y = expression(paste('Current Speed (m ',s^-1, ')', sep='')),
+    x = "Longline length (m)" #,title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.8, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_color_manual(values = colors) 
+
+ggsave("plots/scenario_flow.jpg", width = 8, height = 4, dpi = 300)
+```
+
+# Varying depths
+
+```{r}
+farms_pars_standard <- list(
+  ## Farm parameters 
+  height = 0.5, # m, height of farm box 
+  longline = 200, # m, length of lines 
+  nbox = 100, # -, number of subdivisions along the longline
+  width = 2, # m, distance between longlines
+  nlines = 50, #
+  fk=0.02, # -, friction coefficient
+  min_current = 0.0001, #m/s, minimum current.
+  
+  ## Initial condition of the kelp in the farm 
+  density = 200, # ind/m rope
+  Winit = W_initial, # g, initial DW of kelp 
+  M_V_init = M_V_initial, #molM_V, initial mass 
+  m_EC_init = m_EC_initial, #mol C/molM_V, initial C reserve density
+  m_EN_init = m_EN_initial, #mol N/molM_V, initial N reserve density 
+  farm_design = 1, #Farm design code, 
+  depth_change = TRUE #Does the depth of the kelp farm box change as the kelp grows ?
+)
+
+# 3 m 
+forcings_farmloc_3 <- forcings_farmloc_3[forcings_farmloc_3$datetime >= as.POSIXct("2019-11-01", tz = "UTC"), ]
+
+# 6 m 
+forcings_farmloc_6 <- forcings_farmloc_6[forcings_farmloc_6$datetime >= as.POSIXct("2019-11-01", tz = "UTC"), ]
+
+# 9 m 
+forcings_farmloc_9 <- forcings_farmloc_9[forcings_farmloc_9$datetime >= as.POSIXct("2019-11-01", tz = "UTC"), ]
+
+# 6 m before march , 3 m after 
+forcings_farmloc_6_3 <- forcings_farmloc_3
+
+kd = 0.24
+forcings_farmloc_6_3 <- forcings_farmloc_6_3 %>%
+  mutate(
+    I = if_else(datetime < as.POSIXct("2020-03-01", tz = "UTC"),
+                I * exp(-kd * 3),
+                I )
+  )
+
+
+###
+
+S_D3    <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_farmloc_3)
+
+S_D6    <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_farmloc_6)
+
+S_D9    <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_farmloc_9)
+
+S_D6_3  <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_farmloc_6_3)
+```
+
+```{r}
+bluegreys <- c("#07415B", "#39738D", "#5BA3BB", "#A7D3E5")
+depth_colors <- c(
+  "6 m -> 3 m" = "#07415B",
+  "3 m" = "#39738D", 
+  "6 m" = "#5BA3BB", 
+  "9 m" = "#A7D3E5"
+)
+
+depth_scenarios <- list(S_D3, S_D6, S_D9, S_D6_3)
+
+time_vec <- as.POSIXct(forcings_farmloc_3$datetime)
+
+depth_labels <- c("3 m", "6 m", "9 m", "6 m -> 3 m")
+
+plot_depth_data <- data.frame()
+
+for (i in seq_along(depth_scenarios)) {
+  W_mat <- depth_scenarios[[i]]$W
+  poc_C_mat <- depth_scenarios[[i]]$poc_carbon
+  poc_N_mat <- depth_scenarios[[i]]$poc_nitrogen
+  current_mat <- depth_scenarios[[i]]$current
+  
+  W_df <- as.data.frame(W_mat)
+  W_df$Box <- 1:nrow(W_df)
+  
+  poc_C_df <- as.data.frame(poc_C_mat)
+  poc_N_df <- as.data.frame(poc_N_mat)
+  current_df <- as.data.frame(current_mat)
+  poc_C_df$Box <- 1:nrow(poc_C_df)
+  poc_N_df$Box <- 1:nrow(poc_N_df)
+  current_df$Box <- 1:nrow(current_df)
+  
+  W_dt <- as.data.table(W_df)
+  poc_C_dt <- as.data.table(poc_C_df)
+  poc_N_dt <- as.data.table(poc_N_df)
+  current_dt <- as.data.table(current_df)
+  
+  temp_W <- melt(W_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "W")
+  temp_C <- melt(poc_C_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "poc_carbon")
+  temp_N <- melt(poc_N_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "poc_nitrogen")
+  temp_current <- melt(current_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "current")
+  
+  temp_df <- temp_W
+  temp_df$poc_carbon <- temp_C$poc_carbon
+  temp_df$poc_nitrogen <- temp_N$poc_nitrogen
+  temp_df$current <- temp_current$current
+  
+  temp_df$TimeIndex <- as.integer(gsub("V", "", temp_df$TimeIndex))  
+  temp_df$Time <- time_vec[temp_df$TimeIndex]
+  temp_df$Scenario <- depth_labels[i]  # Use correct label
+  
+  plot_depth_data <- rbind(plot_depth_data, temp_df)
+}
+
+plot_depth_data$Scenario <- factor(plot_depth_data$Scenario, levels = c("6 m -> 3 m", "3 m", "6 m", "9 m"))
+
+
+
+```
+
+```{r}
+plot_depth_data_mean <- plot_depth_data %>%
+  group_by(Scenario, Time) %>%
+  summarise(Mean_W = mean(W, na.rm = TRUE))
+
+ggplot(plot_depth_data_mean, aes(x = Time, y = Mean_W, color = Scenario, group = Scenario)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = depth_colors) +  
+  labs(
+    #title = "",
+    x = "",
+    y = "Mean Dry Weight (g)",
+    color = "Depth"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/depth_meanW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+final_depth_weights <- data.frame()
+
+for (i in seq_along(depth_scenarios)) {
+  W_mat <- depth_scenarios[[i]]$W
+  final_W <- W_mat[, ncol(W_mat)]  # final timestep
+  temp_df <- data.frame(
+    Scenario = depth_labels[i],
+    Box = seq_along(final_W),
+    Final_W = final_W
+  )
+  final_depth_weights <- rbind(final_depth_weights, temp_df)
+}
+
+final_depth_weights$Scenario <- factor(final_depth_weights$Scenario, levels = c("6 m -> 3 m", "3 m", "6 m", "9 m"))
+
+# Plot
+ggplot(data=final_depth_weights, aes(y = Final_W, x = Box * 2, color = Scenario)) +
+  geom_line(size = 1.2) +
+  labs(
+    y = "Final Dry Weight (g)",
+    x = "Longline length (m)", 
+    color = "Depth"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(), 
+    legend.position = c(0.05, 0.8),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_color_manual(values = depth_colors)
+
+#ggsave("plots/Depth_finalW.jpg", width = 8, height = 4, dpi = 300)
+
+summary_depth_weights <- final_depth_weights %>%
+  group_by(Scenario) %>%
+  summarise(
+    Mean_Final_W = mean(Final_W, na.rm = TRUE),
+    Max_Final_W = max(Final_W, na.rm = TRUE),
+    Min_Final_W = min(Final_W, na.rm = TRUE)
+  )
+
+print(summary_depth_weights)
+
+```
+
+# Varying deployment dates
+
+```{r}
+
+forcings_Nov <- forcings[forcings$datetime >= as.POSIXct("2019-11-01", tz = "UTC"), ]
+
+forcings_Dec <- forcings[forcings$datetime >= as.POSIXct("2019-12-01", tz = "UTC"), ]
+
+forcings_Jan <- forcings[forcings$datetime >= as.POSIXct("2020-01-01", tz = "UTC"), ]
+
+forcings_Feb <- forcings[forcings$datetime >= as.POSIXct("2020-02-01", tz = "UTC"), ]
+
+dep_colors <- c(
+  "November" = "#CF81AC", 
+  "December" = "#C33C4C", 
+  "January" = "#EBB540", 
+  "February" = "#D46004"
+  
+)
+
+S_Nov <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_Nov)
+
+S_Dec <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_Dec)
+
+S_Jan <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_Jan)
+
+S_Feb <- farm_run(pars=params_Lo, farms_pars=farms_pars_standard, forcings=forcings_Feb)
+
+```
+
+```{r}
+deployment_scenarios <- list(S_Nov, S_Dec, S_Jan, S_Feb)
+deployment_labels <- c("November", "December", "January", "February")
+
+time_vecs <- list(
+  as.POSIXct(forcings_Nov$datetime),
+  as.POSIXct(forcings_Dec$datetime),
+  as.POSIXct(forcings_Jan$datetime),
+  as.POSIXct(forcings_Feb$datetime)
+)
+
+plot_dep_data <- data.frame()
+
+for (i in seq_along(deployment_scenarios)) {
+  W_mat <- deployment_scenarios[[i]]$W
+  time_vec_dep <- time_vecs[[i]]  # Use corresponding time vector
+  
+  W_df <- as.data.frame(W_mat)
+  W_df$Box <- 1:nrow(W_df)
+  
+  W_dt <- as.data.table(W_df)
+  
+  temp_W <- melt(W_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "W")
+  
+  temp_df <- temp_W
+  temp_df$TimeIndex <- as.integer(gsub("V", "", temp_df$TimeIndex))  
+  temp_df$Time <- time_vec_dep[temp_df$TimeIndex]
+  temp_df$Scenario <- deployment_labels[i]
+  
+  plot_dep_data <- rbind(plot_dep_data, temp_df)
+}
+
+plot_dep_data_mean <- plot_dep_data %>%
+  group_by(Scenario, Time) %>%
+  summarise(Mean_W = mean(W, na.rm = TRUE))
+
+plot_dep_data_mean$Scenario <- factor(plot_dep_data_mean$Scenario, levels = c("November", "December", "January", "February"))
+
+ggplot(plot_dep_data_mean, aes(x = Time, y = Mean_W, color = Scenario, group = Scenario)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = dep_colors) +  
+  labs(
+    x = "",
+    y = "Mean Dry Weight (g)",
+    color = "Deployment Date"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/dep_meanW.jpg", width = 8, height = 4, dpi = 300)
+```
+
+```{r}
+
+final_dep_weights <- data.frame()
+
+for (i in seq_along(deployment_scenarios)) {
+  W_mat <- deployment_scenarios[[i]]$W
+  final_W <- W_mat[, ncol(W_mat)]  
+  temp_df <- data.frame(
+    Scenario = deployment_labels[i],
+    Final_W = final_W
+  )
+  final_dep_weights <- rbind(final_dep_weights, temp_df)
+}
+
+summary_dep_weights <- final_dep_weights %>%
+  group_by(Scenario) %>%
+  summarise(
+    Mean_Final_W = mean(Final_W, na.rm = TRUE),
+    Max_Final_W = max(Final_W, na.rm = TRUE),
+    Min_Final_W = min(Final_W, na.rm = TRUE)
+  )
+
+
+print(summary_dep_weights)
+
+```
+
+# Combining depth and deployment scenarios
+
+```{r}
+depth_scenarios_named <- list(
+  "November - Variable depth" = S_D6_3,
+  "November - 3 m" = S_D3,
+  "November - 6 m" = S_D6,
+  "November - 9 m" = S_D9
+)
+
+depth_plot_data <- data.frame()
+
+for (name in names(depth_scenarios_named)) {
+  scenario <- depth_scenarios_named[[name]]
+  
+  W_df <- as.data.frame(scenario$W)
+  W_df$Box <- 1:nrow(W_df)
+  W_dt <- as.data.table(W_df)
+  temp_W <- melt(W_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "W")
+  
+  temp_W$TimeIndex <- as.integer(gsub("V", "", temp_W$TimeIndex))  
+  temp_W$Time <- time_vec[temp_W$TimeIndex]
+  temp_W$Scenario <- name
+  
+  depth_plot_data <- rbind(depth_plot_data, temp_W)
+}
+
+depth_plot_data_summary <- depth_plot_data %>%
+  group_by(Scenario, Time) %>%
+  summarise(Mean_W = mean(W, na.rm = TRUE), .groups = "drop")
+
+
+deployment_scenarios_named <- list(
+  "December - 3 m" = S_Dec,
+  "January - 3 m" = S_Jan,
+  "February - 3 m" = S_Feb
+)
+
+deployment_plot_data <- data.frame()
+
+for (i in seq_along(deployment_scenarios_named)) {
+  name <- names(deployment_scenarios_named)[i]
+  scenario <- deployment_scenarios_named[[i]]
+  time_vec_dep <- time_vecs[[i + 1]]  # Skip Nov (already used in depth)
+
+  W_df <- as.data.frame(scenario$W)
+  W_df$Box <- 1:nrow(W_df)
+  W_dt <- as.data.table(W_df)
+  temp_W <- melt(W_dt, id.vars = "Box", variable.name = "TimeIndex", value.name = "W")
+
+  temp_W$TimeIndex <- as.integer(gsub("V", "", temp_W$TimeIndex))  
+  temp_W$Time <- time_vec_dep[temp_W$TimeIndex]
+  temp_W$Scenario <- name
+
+  deployment_plot_data <- rbind(deployment_plot_data, temp_W)
+}
+
+deployment_plot_data_summary <- deployment_plot_data %>%
+  group_by(Scenario, Time) %>%
+  summarise(Mean_W = mean(W, na.rm = TRUE), .groups = "drop")
+
+# Combine 
+combined_plot_data <- bind_rows(depth_plot_data_summary, deployment_plot_data_summary)
+
+
+# Color palette 
+scen_colors <- c(
+  "November - 3 m" = "black",
+  "November - Variable depth" = "#07415B",
+  "November - 6 m" = "#39738D",
+  "November - 9 m" = "#5BA3BB",
+  "December - 3 m" = "#C33C4C",
+  "January - 3 m" = "#CF81AC", 
+  "February - 3 m" = "#D46004"
+)
+
+scenario_order <- names(scen_colors)
+combined_plot_data$Scenario <- factor(combined_plot_data$Scenario, levels = scenario_order)
+
+# --- Plot ---
+ggplot(combined_plot_data, aes(x = Time, y = Mean_W, color = Scenario)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = scen_colors) +
+  labs(
+    x = "",
+    y = "Mean Dry Weight (g)",
+    color = "Scenario"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = c(0.1, 0.9),
+    legend.justification = c(0, 1),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.key = element_blank()
+  ) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+ggsave("plots/depthdep.jpg", width = 8, height = 4, dpi = 300)
+ggsave("plots/depthdep.svg", width = 8, height = 4, dpi = 300)
+```
