@@ -1,0 +1,227 @@
+---
+title: "Allometric relationship between area and W"
+format: html
+editor: visual
+---
+
+## Library
+
+```{r}
+library(here)       #sets working directory 
+
+library(readxl)     #for reading excel files 
+library(tidyverse)  #dplyr, ggplot2, tidyr, etc. 
+
+library(MuMIn)      #For calculating AICc
+```
+
+## Import
+
+```{r}
+mastersheet <- read_excel("data/Mastersheet_october2019_area-weight-fouling.xlsx")
+
+```
+
+## Allometric relationship between thallus area and fresh weight
+
+```{r}
+Kelp_area_FW <- mastersheet %>% 
+  select(Date, Days.deployed, Deployment, Area, Weight) %>% 
+  mutate(Weight = as.numeric(Weight, na.rm = TRUE)) %>% 
+  drop_na(Weight) %>% 
+  rename(FW = Weight)
+```
+
+```{r}
+Kelp_allometric <- lm(FW ~ Area, data = Kelp_area_FW)
+
+summary(Kelp_allometric)
+```
+
+```{r}
+#Log transform the area and weigh 
+Kelp_area_FW_log <- Kelp_area_FW %>% 
+  select(Area, FW, Deployment) %>%
+  mutate(log_Area = log(Area), log_FW = log(FW))
+```
+
+```{r}
+Kelp_log_allometric2 <- lm(log_Area ~  log_FW, data = Kelp_area_FW_log)
+
+summary(Kelp_log_allometric2)
+```
+
+```{r}
+ggplot(data = Kelp_area_FW_log, aes(x = log_Area, y = log_FW)) + 
+  geom_point(colour = "grey40") + 
+  geom_smooth(method = "lm", col = "black") + 
+  labs(x = "Log(Thallus area (cm2))", y = "Log(Fresh Weight(g))") + 
+  theme_minimal()
+  
+```
+
+```{r}
+
+b0 <- coef(Kelp_log_allometric2)[1]  # Intercept
+b1 <- coef(Kelp_log_allometric2)[2]  # Slope
+
+area_seq <- seq(min(Kelp_area_FW$Area), max(Kelp_area_FW$Area), length.out = 100)
+
+fw_pred <- exp((log(area_seq) - b0) / b1)
+
+model_line <- data.frame(Area = area_seq, FW = fw_pred)
+
+# Plot
+ggplot(Kelp_area_FW, aes(x = Area, y = FW)) + 
+  geom_point(colour = "#444444") +  # Raw data points
+  geom_line(data = model_line, aes(x = Area, y = FW), color = "black", linewidth = 1) +  # Model line
+  labs(x = expression(paste('Thallus Area (', cm^2,')')), y = "Fresh Weight (g)") + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank()
+  ) 
+  
+  
+
+
+```
+
+```{r}
+
+b0 <- coef(Kelp_log_allometric2)[1]  # Intercept
+b1 <- coef(Kelp_log_allometric2)[2]  # Slope
+
+
+fw_seq <- seq(min(Kelp_area_FW$FW), max(Kelp_area_FW$FW), length.out = 100)
+
+
+area_pred <- exp(b0) * fw_seq^b1
+
+model_line_flipped <- data.frame(FW = fw_seq, Area = area_pred)
+
+# 
+ggplot(Kelp_area_FW, aes(x = FW, y = Area)) + 
+  geom_point(colour = "#444444") +  # Raw data points
+  geom_line(data = model_line_flipped, aes(x = FW, y = Area), color = "black", linewidth = 1) +  
+  labs(x = "Fresh Weight (g)", y = expression(paste('Thallus Area (', cm^2,')'))) + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(), 
+    panel.grid.minor.x = element_blank()
+  )
+
+#ggsave("plots/FW_A.jpg", width = 6, height = 4, dpi = 300)
+```
+
+```{r}
+
+AICc_linear <- AICc(Kelp_allometric)
+AICc_linear_log <- AICc(Kelp_log_allometric)
+
+print(AICc_linear)
+print(AICc_linear_log)
+
+AIC_linear <- AIC(Kelp_allometric)
+AIC_linear_log <- AIC(Kelp_log_allometric)
+
+print(AIC_linear)
+print(AIC_linear_log)
+```
+
+## FW vs DW
+
+```{r}
+FW_DW <- read_excel("data/FW_DW_result.xlsx") %>% 
+  rename_with(~ make.names(.))
+```
+
+```{r}
+ggplot(data = FW_DW, aes(x = as.factor(Deployment) , y = DW.FW)) + 
+  geom_boxplot() + 
+  labs(title = "Relationship between DW and FW", x = "Deployment", y = "DW / FW")
+```
+
+```{r}
+FW_DW %>%
+  #group_by(Deployment) %>%
+  summarize(mean_DW.FW = mean(DW.FW, na.rm = TRUE), 
+            sd_DW.FW = sd(DW.FW, na.rm = TRUE), 
+            SE_DW.FW = sd(DW.FW, na.rm = TRUE) / sqrt(n())) %>%
+  print()
+```
+
+```{r}
+
+mu <- 0.1342
+
+
+FW_DW$DW_pred_mu <- mu * FW_DW$FW.kelp..g.
+
+
+SS_res <- sum((FW_DW$DW.kelp..g. - FW_DW$DW_pred_mu)^2)
+
+
+SS_tot <- sum((FW_DW$DW.kelp..g. - mean(FW_DW$DW.kelp..g.))^2)
+
+
+R2_mu_model <- 1 - (SS_res / SS_tot)
+
+R2_mu_model
+
+```
+
+```{r}
+
+fw_seq = seq(0,25, by=1)
+
+dw_pred = fw_seq * 0.1342
+
+model_line2 <- data.frame(FW = fw_seq, DW = dw_pred)
+
+# Plot
+ggplot() + 
+  geom_point(data = FW_DW, aes(x = FW.kelp..g., y = DW.kelp..g.), color = "#444444") +  # Raw data points
+  geom_line(data = model_line2, aes(x = FW, y = DW), color = "black", linewidth = 1) +
+  labs(y = "DW (g)", x = "FW (g)") +
+  theme_minimal() + 
+  theme(
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor.x = element_blank()) 
+
+  
+
+#ggsave("plots/FW_DW.jpg", width = 6, height = 4, dpi = 300)
+```
+
+\
+
+```{r}
+testvalues_DW <- data.frame(DW = seq(0, 25, by = 0.1)) %>% 
+  mutate(Area = 39.3790 * (DW/0.1342)^0.912530)
+
+Kelp_area_DW <- Kelp_area_FW %>% 
+  mutate(DW = FW * 0.1342) %>% 
+  select(Area, DW)
+
+#39.3790 * (W/0.1342)^0.912530
+
+ggplot() + 
+  geom_smooth(data = testvalues_DW, aes(x = Area, y = DW ), colour = "black") + 
+  geom_point(data = Kelp_area_DW, aes(x = Area, y = DW )) + 
+  labs(title = "Area (cm2) = 39.3790 * (DW/0.1342)^0.912530", y = "DW (g)", x = "Area (cm2)") 
+  
+```
+
+## Plot for results :
+
+```{r}
+
+W <- seq(0, 15, by = 0.01)
+
+Area_allometric <- 39.3790 * (W/0.1342)^0.912530
+
+ggplot() + 
+  
+
+```
