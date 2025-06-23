@@ -1,0 +1,562 @@
+---
+title: "Forcings Utsira and Austevoll"
+author: "Malene Dekke Eik"
+format: html
+editor: visual
+---
+
+To make dataframes and plots for forcings
+
+## Library
+
+```{r}
+library(here)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(zoo)
+library(patchwork)
+```
+
+## Utsira - central location
+
+```{r}
+utsira_val <- read.delim('DATA_UTSIRA/utsira_hourly_vars.txt', sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+
+# Read the datetime as character
+utsira_val$datetime <- as.character(utsira_val$datetime)
+
+# Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS"
+utsira_val$datetime <- ifelse(nchar(utsira_val$datetime) == 10, 
+                              paste0(utsira_val$datetime, " 00:00:00"), 
+                              utsira_val$datetime)
+
+# Convert to POSIXct
+utsira_val$datetime <- as.POSIXct(utsira_val$datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+
+utsira_val <- utsira_val %>%
+  mutate(
+    speed = sqrt(u^2 + v^2),                     # Current speed in m/s
+    direction = (atan2(v, u) * 180 / pi) + 180,   # Compass degrees
+    speed = ifelse(direction > 90 & direction < 270, speed, -speed), # Adjust speed based on direction
+    year_adjusted = ifelse(month(datetime) > 6, year(datetime) - 1, year(datetime)),  # Adjust the year
+    datetime = make_datetime(year_adjusted, month(datetime), day(datetime), hour(datetime), minute(datetime), second(datetime)), # Reconstruct datetime
+    PAR = swrad * 0.43 * 4.56 * exp(-0.46 * 1) * 3600 * 1e-6
+  ) %>%
+  filter(month(datetime) %in% c(1, 2, 3, 4, 10, 11, 12))  # Keep selected months
+
+utsira_val <- utsira_val %>%
+  arrange(datetime)  # Sort by datetime in descending order
+
+#directions from 90-270 the speed is negative
+#if from direction 270-90 the speed is positive value (north is Positive value )
+```
+
+```{r}
+utsira_forcings <- utsira_val %>% 
+  mutate(temperature = temp + 273.15, I = PAR, S = salt) %>% 
+  select(datetime, temperature, S, I, speed)
+```
+
+```{r}
+#Surface light 
+utsira_forcings <- utsira_val %>% 
+  mutate(temperature = temp + 273.15, I = PAR, S = salt) %>% 
+  select(datetime, temperature, S, I, speed)
+
+# 3 m depth light 
+depth = 3
+kd = 0.24 # 
+utsira_forcings_3m <- utsira_forcings %>%
+  mutate(I = I * exp(-kd*depth))
+```
+
+```{r}
+#write.csv(utsira_forcings, file = "data/forcings_utsira_central_surface.csv", row.names = TRUE)
+
+#write.csv(utsira_forcings_3m, file = "data/forcings_utsira_central_3m.csv", row.names = TRUE)
+```
+
+```{r}
+#Summary forcings 
+summary_utsira_c_S <- utsira_forcings %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime) ,  
+         temperature = temperature - 273.15) %>%  # Convert from Kelvin to Celsius
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),  # Sum of irradiance per day
+    mean_T = mean(temperature, na.rm = TRUE),  # Mean temperature per day
+    mean_speed = mean(abs(speed), na.rm = TRUE)
+  ) %>% 
+  mutate(date = as.POSIXct(date))
+
+summary_utsira_c_3 <- utsira_forcings_3m %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime),  
+         temperature = temperature - 273.15) %>%  # Convert from Kelvin to Celsius
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),  # Sum of irradiance per day
+    mean_T = mean(temperature, na.rm = TRUE)  # Mean temperature per day
+  ) %>% 
+  mutate(date = as.POSIXct(date))
+```
+
+```{r}
+custom_light_palette <- c(
+  "Surface" = "#B98A1C",       
+  "3 m" = "#EBB540", 
+  "6 m" = "#F7D568", 
+  "9 m" = "#FBEBA2"
+)
+goldens <- c("#B98A1C", "#EBB540", "#F7D568", "#FBEBA2")
+
+#Plot Irradiance 
+I_plot <- ggplot() + 
+  geom_line(data = summary_utsira_c_S, aes(x = date, y = sum_I, colour = "Surface"), size = 0.5) + 
+  geom_line(data = summary_utsira_c_3, aes(x = date, y = sum_I, colour = "3 m"), size = 0.8) +
+  labs(y = expression(paste('mol I# ',m^-1, d^-1, sep='')),
+       title = "", 
+       x = "", colour = "Depth") + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_light_palette)
+
+
+#Plot temperature 
+temp_plot <- ggplot() + 
+  geom_line(data = summary_utsira_c_S, aes(x = date, y = mean_T), color = "#0273B3", linewidth = 0.8) +
+  labs(y = "Celsius", 
+       title = "", 
+       x = "") + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank()
+  )
+
+
+```
+
+```{r}
+temp_plot + I_plot + plot_layout(axis_titles = "collect")
+
+#ggsave("plots/T+I_utsira.jpg", width = 8, height = 4, dpi = 300)
+```
+
+## Austevoll
+
+```{r}
+aust_val <- read.delim('old_data/Austevoll_kelp_2018-2019.txt', sep="\t", header=TRUE, stringsAsFactors=FALSE)
+```
+
+```{r}
+#TODO: Decide if the direction is also north-south in austevoll, if modelling farm there
+
+aust_val <- aust_val %>%
+  mutate(
+    speed = sqrt(u^2 + v^2),                     # Current speed in m/s
+    direction = (atan2(v, u) * 180 / pi) + 180,   # Compass degrees, 
+    speed = ifelse(direction > 90 & direction < 270, -speed, speed), #positive and negative speed values based on directions (north positive, south negative)
+    PAR = swrad*0.43*4.56*exp(-0.46*1)*3600*1e-6
+  )
+
+# Read the datetime as character
+aust_val$datetime <- as.character(aust_val$datetime)
+
+# Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS"
+aust_val$datetime <- ifelse(nchar(aust_val$datetime) == 10, 
+                              paste0(aust_val$datetime, " 00:00:00"), 
+                              aust_val$datetime)
+
+# Convert to POSIXct
+aust_val$datetime <- as.POSIXct(aust_val$datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+aust_forcings <- aust_val %>% 
+  mutate(I = PAR) %>% 
+  select(datetime, I, speed) %>% 
+  mutate(datetime = as.POSIXct(datetime, format = "%Y/%m/%d %H:%M:%S", tz="UTC"))
+
+```
+
+```{r}
+
+#OLD 
+aust_env <- read_csv("old_data/Austevoll_environmental_data.csv")
+
+aust_env$datetime <- as.POSIXct(aust_env$datetime, format="%d/%m/%Y %H:%M:%S", tz="UTC")
+
+aust_env$I <- NULL
+
+aust_env <- aust_env %>%
+  arrange(datetime) %>%
+  mutate(K = ifelse(datetime >= as.POSIXct("2019-03-19 12:00:00") & 
+                    datetime <= as.POSIXct("2019-03-21 09:00:00"), 
+                    NA, K)) %>%
+  mutate(K = na.approx(K, datetime, na.rm = FALSE))
+  #mutate(K = ifelse(all(is.na(K)), K, na.approx(K, x = as.numeric(datetime), na.rm = FALSE)))
+```
+
+```{r}
+
+aust_forcings <- aust_forcings %>% 
+  inner_join(aust_env, by = "datetime")
+
+write.csv(aust_forcings, file = "data/forcings_austevoll.csv", row.names = TRUE)
+```
+
+```{r}
+aust_test <- aust_forcings %>% 
+  mutate(K = K - 273.15)
+
+ggplot() + 
+  geom_line(data= aust_test, aes(x= datetime, y = K))
+```
+
+Keeping old temperature,
+
+only adding speed and new Irradiance
+
+![](images/clipboard-4267973535.png)
+
+![](images/clipboard-2856896438.png)
+
+# Farm location - utsira
+
+```{r}
+utsira_val <- read.delim('DATA_UTSIRA/utsira_env_best_location_2020.txt', sep="\t", header=TRUE, stringsAsFactors=FALSE)
+#light_aust$datetime <- ymd_hms(light_aust$datetime, tz = "UTC")
+
+
+# Read the datetime as character
+utsira_val$datetime <- as.character(utsira_val$datetime)
+
+# Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS"
+utsira_val$datetime <- ifelse(nchar(utsira_val$datetime) == 10, 
+                              paste0(utsira_val$datetime, " 00:00:00"), 
+                              utsira_val$datetime)
+
+# Convert to POSIXct
+utsira_val$datetime <- as.POSIXct(utsira_val$datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+
+utsira_val <- utsira_val %>%
+  mutate(
+    speed = sqrt(u^2 + v^2),                     # Current speed in m/s
+    direction = (atan2(v, u) * 180 / pi) + 180,   # Compass degrees
+    speed = ifelse(direction > 90 & direction < 270, speed, -speed), # Adjust speed based on direction
+    year_adjusted = ifelse(month(datetime) > 6, year(datetime) - 1, year(datetime)),  # Adjust the year
+    datetime = make_datetime(year_adjusted, month(datetime), day(datetime), hour(datetime), minute(datetime), second(datetime)), # Reconstruct datetime
+    PAR = swrad * 0.43 * 4.56 * exp(-0.46 * 1) * 3600 * 1e-6
+  ) %>%
+  filter(month(datetime) %in% c(1, 2, 3, 4, 10, 11, 12))  # Keep selected months
+
+utsira_val <- utsira_val %>%
+  arrange(datetime)  # Sort by datetime in descending order
+
+#directions from 90-270 the speed is negative
+#if from direction 270-90 the speed is positive value (north is Positive value )
+
+utsira_forcings <- utsira_val %>% 
+  mutate(temperature = temp + 273.15, I = PAR, S = salt) %>% 
+  select(datetime, temperature, S, I, speed)
+```
+
+```{r}
+library(ncdf4)
+library(here)
+```
+
+```{r}
+
+# depth = 3 
+# depth = 6
+depth = 9
+grid = 800
+
+i_ind <- 93
+j_ind <- 141
+
+file = "DATA_UTSIRA/dumpnut2020_01.nc"
+forcings = utsira_forcings #forcings from the selected location ! 
+############## 
+
+nc <- nc_open(file)
+totPP = ncvar_get(nc, varid="Nit")
+C = totPP
+nx <- dim(C)[1]
+ny <- dim(C)[2]
+
+# Extract time values
+  nc_time_vals <- nc$dim$T$vals
+  time_units <- nc$dim$T$units  # 'hours since 1950-01-01 01:00:00'
+  origin_time <- as.POSIXct("1950-01-01 01:00:00", tz = "UTC")
+  nc_datetime <- origin_time + as.difftime(nc_time_vals, units = "hours")
+  
+  # Changing the months October to December to the year 2019 , to fill nitrogen values in forcings   
+  nc_datetime <- as.POSIXct(nc_datetime)  
+  month_vals <- as.integer(format(nc_datetime, "%m"))
+  year_vals <- as.integer(format(nc_datetime, "%Y"))
+  year_vals[year_vals == 2020 & month_vals %in% 10:12] <- 2019
+  
+  # Replace with new datetime
+  nc_datetime <- as.POSIXct(sprintf("%04d-%02d-%02d %02d:%02d:%02d",
+                                    year_vals,
+                                    as.integer(format(nc_datetime, "%m")),
+                                    as.integer(format(nc_datetime, "%d")),
+                                    as.integer(format(nc_datetime, "%H")),
+                                    as.integer(format(nc_datetime, "%M")),
+                                    as.integer(format(nc_datetime, "%S"))),
+                            tz = "UTC")
+  
+  #Depth 
+  h <- ncvar_get(nc, varid='Topo') #depth at each x,y cordinate 
+  zEdges <- nc$dim$Z$vals
+  S.new <- array(NA, dim=c(dim(C)[1], dim(C)[2], dim(C)[3]))
+  S.new[,,]=rep(h, dim(C)[3])
+  S.new = apply(S.new, 1:2, function(x) x*zEdges)
+  zm <- aperm(S.new, c(2,3,1))
+  S.new <- zm-depth # subtracting the the depth from the calculated depth of each layer at each x,y 
+  
+  S.min <- apply(S.new, 1:2, function(x) which.min(abs(x)))
+  
+  
+k <- S.min[i_ind, j_ind] #depth layer for selected location 
+
+orig_vals <- totPP[i_ind, j_ind, k, ]
+
+if (all(is.na(orig_vals))) {
+  nit_df <- data.frame(
+    x = i_ind,
+    y = j_ind,
+    datetime = forcings$datetime,
+    nit_mol = NA_real_
+  )
+} else {
+  # Interpolate values to match the forcing datetime
+  matched_vals <- approx(x = as.numeric(nc_datetime),
+                         y = orig_vals,
+                         xout = as.numeric(forcings$datetime),
+                         method = "linear",
+                         rule = 2)$y
+  
+  # Resulting dataframe
+  nit_df <- data.frame(
+    x = i_ind,
+    y = j_ind,
+    datetime = forcings$datetime,
+    nit_mol = matched_vals * 1e-6  # 
+  )
+}
+
+kd = 0.24 # 
+forcings <- forcings %>%
+  left_join(nit_df %>% select(datetime, N = nit_mol), by = "datetime") %>% 
+  mutate(I = I * exp(-kd*depth))
+
+```
+
+```{r}
+# Write csv files for forcings at different depths 
+
+#write.csv(forcings, file = "data/forcings_farmloc_3m.csv", row.names = TRUE)
+#write.csv(forcings, file = "data/forcings_farmloc_6m.csv", row.names = TRUE)
+#write.csv(forcings, file = "data/forcings_farmloc_9m.csv", row.names = TRUE)
+```
+
+## Multiple depths
+
+```{r}
+# 3 m 
+forcings_farmloc_3 <- read_csv("data/forcings_farmloc_3m.csv") 
+
+# 6 m 
+forcings_farmloc_6 <- read_csv("data/forcings_farmloc_6m.csv") 
+
+# 9 m 
+forcings_farmloc_9 <- read_csv("data/forcings_farmloc_9m.csv") 
+```
+
+```{r}
+#Summary forcings 
+summary_surface <- utsira_forcings %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime) ) %>%  
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),
+    mean_speed = mean(abs(speed), na.rm = TRUE)) %>% 
+  mutate(date = as.POSIXct(date))
+
+summary_utsira_3 <- forcings_farmloc_3 %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime) ,  
+         temperature = temperature - 273.15) %>%  # Convert from Kelvin to Celsius
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),  # Sum of irradiance per day
+    mean_T = mean(temperature, na.rm = TRUE),  # Mean temperature per day
+    mean_speed = mean(abs(speed), na.rm = TRUE), 
+    mean_N = mean(N, na.rm = TRUE)
+  ) %>% 
+  mutate(date = as.POSIXct(date))
+
+summary_utsira_6 <- forcings_farmloc_6 %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime),  
+         temperature = temperature - 273.15) %>%  # Convert from Kelvin to Celsius
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),  # Sum of irradiance per day
+    mean_T = mean(temperature, na.rm = TRUE),  # Mean temperature per day
+    mean_N = mean(N, na.rm = TRUE)
+  ) %>% 
+  mutate(date = as.POSIXct(date))
+
+summary_utsira_9 <- forcings_farmloc_9 %>% 
+  mutate(datetime = as.POSIXct(datetime),  # Convert to POSIXct
+         date = as.Date(datetime),  
+         temperature = temperature - 273.15) %>%  # Convert from Kelvin to Celsius
+  group_by(date) %>% 
+  summarise(
+    sum_I = sum(I, na.rm = TRUE),  # Sum of irradiance per day
+    mean_T = mean(temperature, na.rm = TRUE),  # Mean temperature per day, 
+    mean_N = mean(N, na.rm = TRUE)
+  ) %>% 
+  mutate(date = as.POSIXct(date))
+```
+
+```{r}
+custom_light_palette <- c(
+  "Surface" = "#B98A1C",       
+  "3 m" = "#EBB540", 
+  "6 m" = "#F7D568", 
+  "9 m" = "#FBEBA2"
+)
+goldens <- c("#B98A1C", "#EBB540", "#F7D568", "#FBEBA2")
+
+#Plot Irradiance 
+I_plot <- ggplot() + 
+  geom_line(data = summary_surface, aes(x = date, y = sum_I, colour = "Surface"), size = 0.5) + 
+  geom_line(data = summary_utsira_3, aes(x = date, y = sum_I, colour = "3 m"), size = 0.8) +
+  geom_line(data = summary_utsira_6, aes(x = date, y = sum_I, colour = "6 m"), size = 0.8) +
+  geom_line(data = summary_utsira_9, aes(x = date, y = sum_I, colour = "9 m"), size = 0.8) +
+  labs(y = expression(paste('mol I# ',m^-1, d^-1, sep='')),
+       #title = "Sum of Irradiance pr. day", 
+       x = "", 
+       colour = "Depth") + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_light_palette)
+
+
+#Plot temperature 
+temp_plot <- ggplot() + 
+  geom_line(data = summary_utsira_3, aes(x = date, y = mean_T), color = "#0273B3", linewidth = 0.8) +
+  labs(y = "Celsius", 
+       #title = "Average Temperature pr. day" , 
+       x = ""
+       ) + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank()
+  )
+
+
+# Plot N
+custom_N_palette <- c(
+  "Surface" = "#9B3B70",       
+  "3 m" = "#CF81AC", 
+  "6 m" = "#DA9EBF", 
+  "9 m" = "#E1B9D9"
+)
+
+magentas <- c("#9B3B70", "#CF81AC", "#DA9EBF", "#E1B9D9")
+
+
+N_plot <- ggplot() + 
+  #geom_line(data = summary_surface, aes(x = date, y = sum_I, colour = "Surface"), size = 0.5) + 
+  geom_line(data = summary_utsira_3, aes(x = date, y = mean_N, colour = "3 m"), size = 1) +
+  geom_line(data = summary_utsira_6, aes(x = date, y = mean_N, colour = "6 m"), size = 0.5) +
+  geom_line(data = summary_utsira_9, aes(x = date, y = mean_N, colour = "9 m"), size = 0.5) +
+  labs(y = expression(paste('mol N ',L^-1, sep='')),
+       #title = "Mean inorganic nitrogen pr. day", 
+       x = "", colour = "Depth") + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank() , 
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_N_palette)
+
+custom_current_palette <- c(
+  "Current and direction pr. hour" = "#A7D3E5",       
+  "Absolute mean pr.day" = "#0273B3" 
+)
+speed_breaks <- c(0, 0.025, 0.05, 0.1, 0.2, 0.4, 0.5, Inf)
+
+current_plot <- ggplot() + 
+  geom_line(data = utsira_forcings, aes(x = datetime, y = speed, color = "Current and direction pr. hour")) +
+  geom_line(data = summary_surface, aes(x = date, y = mean_speed, color = "Absolute mean pr.day"), linewidth = 0.8) +
+  labs(y = expression(paste('Speed m ',s^-1, sep='')), 
+       #title = "Current speed and direction", 
+       x = "", 
+       colour = "Speed") + 
+  scale_x_datetime(date_labels = "%b", breaks = "month") +
+  scale_y_continuous(breaks = c(seq(-0.4, 0.4, by = 0.2)) ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(), 
+    legend.position = "bottom",  # Move legend to top-left
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_current_palette)
+
+mean_current = mean(abs(utsira_forcings$speed))
+```
+
+```{r}
+'temp_plot
+ggsave("plots/T_farm.jpg", width = 8, height = 4, dpi = 300)'
+
+'I_plot
+ggsave("plots/I_farm.jpg", width = 8, height = 4, dpi = 300)'
+
+'N_plot
+ggsave("plots/N_farm.jpg", width = 8, height = 4, dpi = 300)'
+
+(I_plot  + N_plot) / (temp_plot + current_plot )
+
+ggsave("plots/env_farm2.jpg", width = 10, height = 8, dpi = 300)
+```
