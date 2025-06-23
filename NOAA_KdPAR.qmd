@@ -1,0 +1,78 @@
+---
+title: "NOAA kd(PAR)"
+format: html
+editor: visual
+---
+
+## Library
+
+```{r}
+library(ncdf4)
+library(here)
+library(readr)
+library(ggplot2)
+library(lubridate)
+```
+
+# Website download details :
+
+# <https://coastwatch.noaa.gov/erddap/griddap/noaacwNPPN20VIIRSkdparDaily.html?> ![](images/clipboard-3156003390.png)
+
+# Get kd
+
+```{r}
+
+file = "DATA_UTSIRA/noaacwNPPN20VIIRSkdparDaily_5fe0_5bba_1516_U1745571424213.nc" # File from NOAA website 
+
+nc <- nc_open(file)
+
+lat <- ncvar_get(nc, "latitude")
+lon <- ncvar_get(nc, "longitude")
+time <- ncvar_get(nc, "time")
+
+target_lat <- 59.2758
+target_lon <- 4.5408
+
+lat_index <- which.min(abs(lat - target_lat))
+lon_index <- which.min(abs(lon - target_lon))
+
+actual_lat <- lat[lat_index]
+actual_lon <- lon[lon_index]
+
+kd_par <- ncvar_get(nc, "kd_par")
+
+kd_timeseries <- kd_par[lon_index, lat_index, ]
+
+time_units <- ncatt_get(nc, "time", "units")$value
+ref_date <- sub("days since ", "", time_units)
+dates <- as.POSIXct(time, origin = "1970-01-01", tz = "UTC")
+
+nc_close(nc)
+
+df <- data.frame(
+  date = dates,
+  kd_par = kd_timeseries
+)
+
+kd_mean <- mean(df$kd_par, na.rm = TRUE)
+
+
+```
+
+```{r}
+ggplot(df, aes(x = date, y = kd_par)) +
+  geom_point(color = "#0273B3", size = 2) +
+  geom_hline(yintercept = kd_mean, linetype = "dashed", color = "#C33C4C") +
+  labs(
+    #title = "Daily light extinction coefficient at Utsira Nord central point",
+    x = "2019-2020",
+    y = expression(paste('Kd (PAR) ',m^-1, sep=''))
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank()
+  )
+
+ggsave("plots/Kd.jpg", width = 8, height = 4, dpi = 300)
+```
