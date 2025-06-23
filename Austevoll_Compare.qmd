@@ -1,0 +1,445 @@
+---
+title: "Single Kelp Run"
+author: "Malene Dekke Eik"
+format: html
+editor: visual
+---
+
+Forcing format :
+
+Hourly timesteps (year-month-day hour:minute:sek), CO2 (mol /L), N (mol /L) , Irradiance (PAR), temperature (kelvin)
+
+## Library
+
+```{r}
+#library(DEB)
+require(ggplot2)
+require(dplyr)
+library(lubridate)
+library(Metrics)
+require(ggpubr)
+library(pracma)
+require(deSolve)
+options(warn=-1)
+
+library(patchwork)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(here)
+library(readxl)
+
+#Required for model runs
+source("SolveR_R.R")
+source("KelpDEB_model_Venolia.R")
+source("DEB_params.R") # this script store the parameters for easy tracking.
+#source("calibration_kelp.R")
+source("single_kelp_run.R")
+
+#Required for Calibration Code
+source("N_uptake_Calibration_Venolia.R")
+source("Photosynthesis_Calibration_Venolia.R")
+```
+
+## Parameters
+
+```{r}
+pars <- load_pars()
+params_Lo <- pars$p
+formatted <- format(pars$params, digits=2)
+knitr::kable(formatted[,2:5], caption='Kelp DEB Parameter list')
+remove(formatted)
+
+#temporary , place in DEB_params.R ?
+# definition of molecular weights  
+w_V <-  29.89 #w_O[3]  # g/mol       #molecular weight of structure
+w_EN <- 54 #w_O[4]  # g/mol      #molecular weight of N reserve
+w_EC <- 30 #w_O[5]  #g/mol       #molecular weight of C reserve
+w_O2 <- 32 #g/mol
+```
+
+# Austevoll
+
+Comparing the Austevoll mesured data from Hege Skaar to the modeled growth
+
+## Environmental data
+
+```{r}
+
+forcings_aust <- read_csv("data/forcings_austevoll.csv") %>% 
+  mutate(datetime = as.POSIXct(datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")) %>% rename(temperature = K)
+
+#head(forcings_aust)
+
+```
+
+#K : 273.15\
+
+## Kelp Data, Austevoll
+
+```{r}
+Kelp_Growth <- read_excel("data/Mastersheet_october2019_area-weight-fouling.xlsx")
+
+### October ###
+KG_Oct <- Kelp_Growth %>% 
+  filter(Deployment == 1)
+
+#Initial Area and calculated DW
+A_Oct <- KG_Oct %>%  
+  filter(Days.deployed == 0) %>% 
+  summarize(mean_area =mean(Area)) %>% 
+  pull(mean_area) #cm2
+
+W_oct <- 0.1342 * (A_Oct / 39.3790)^(1 / 0.912530) #DW (g)
+
+#Mean data for plotting 
+KG_Oct_meandat <- KG_Oct %>% 
+  mutate(Weight = as.numeric(Weight)) %>% 
+  filter(!is.na(Weight)) %>% 
+  mutate(DW = Weight * 0.1342) %>%
+  group_by(Date) %>% 
+  summarize(mean_area = mean(Area, na.rm = TRUE), 
+            sd_area = sd(Area, na.rm = TRUE),
+            mean_DW = mean(DW, na.rm = TRUE), 
+            sd_DW = sd(DW, na.rm = TRUE))
+
+### November ###
+KG_Nov <- Kelp_Growth %>% 
+  filter(Deployment == 3)
+
+#Initial Area and calculated DW
+A_Nov <- KG_Nov %>%  
+  filter(Days.deployed == 0) %>% 
+  summarize(mean_area =mean(Area)) %>% 
+  pull(mean_area) #cm2
+
+W_Nov <- 0.1342 * (A_Nov / 39.3790)^(1 / 0.912530) #DW (g)
+
+#Mean data for plotting 
+KG_Nov_meandat <- KG_Nov %>% 
+  mutate(Weight = as.numeric(Weight)) %>% 
+  filter(!is.na(Weight)) %>% 
+  mutate(DW = Weight * 0.1342) %>%
+  group_by(Date) %>% 
+  summarize(mean_area = mean(Area, na.rm = TRUE), 
+            sd_area = sd(Area, na.rm = TRUE),
+            mean_DW = mean(DW, na.rm = TRUE), 
+            sd_DW = sd(DW, na.rm = TRUE))
+
+### January ###
+KG_Jan <- Kelp_Growth %>% 
+  filter(Deployment == 4)
+
+#Initial Area and calculated DW
+A_Jan <- KG_Jan %>%  
+  filter(Days.deployed == 0) %>% 
+  summarize(mean_area =mean(Area)) %>% 
+  pull(mean_area) #cm2
+
+W_Jan <- 0.1342 * (A_Jan / 39.3790)^(1 / 0.912530) #DW (g)
+
+#Mean data for plotting 
+KG_Jan_meandat <- KG_Jan %>% 
+  mutate(Weight = as.numeric(Weight)) %>% 
+  filter(!is.na(Weight)) %>% 
+  mutate(DW = Weight * 0.1342) %>%
+  group_by(Date) %>% 
+  summarize(mean_area = mean(Area, na.rm = TRUE), 
+            sd_area = sd(Area, na.rm = TRUE),
+            mean_DW = mean(DW, na.rm = TRUE), 
+            sd_DW = sd(DW, na.rm = TRUE))
+```
+
+## October, Austevoll
+
+```{r}
+#october intial conditions 
+W <- W_oct 
+#W <- 0.0002384454 #g DW , Initial Weight based off 15 mm length 
+#W <- 0.05
+m_EC <- 0.39
+m_EN <- 0.1
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2018-10-24 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_oct <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+```{r}
+### Finding the m_EC , m_EN, M_V at the measured value dates. 
+#target_date <- as.POSIXct("2019-01-10 00:00:00") #From first measured value 
+#target_date <- as.POSIXct("2019-02-04 00:00:00") #From second measured value
+#target_date <- as.POSIXct("2019-03-05 00:00:00") #From third measured value 
+
+#target_row <- which(kelp_oct$datetime == target_date)
+#target_m_EC <- kelp_oct$reserves_m_EC[target_row] #getting the m_EC at the target date from the model
+#target_m_EN <- kelp_oct$reserves_m_EN[target_row] #getting the m_EN at the target date from the model
+
+```
+
+```{r}
+#From first measured value  
+W <- 0.01075571
+#m_EC <- 0.39
+m_EC <- 3.099e-06
+#m_EN <- 0.1
+m_EN <- 0.0245
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2019-01-10 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_oct_1 <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+```{r}
+#From second measured value
+W <- 0.41771847
+m_EC <- 0.0001162528 #0.39
+m_EN <- 0.02494429 #0.1
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2019-02-04 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_oct_2 <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+```{r}
+#From third measured value 
+W <- 1.31612456
+m_EC <- 0.04483901 #0.39
+m_EN <- 0.01480028 #0.1
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2019-03-05 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_oct_3 <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+```{r}
+custom_palette <- c(
+  "Deployment date" = "#174A7E",       
+  "First measurements" = "#0273B3", 
+  "Second measurements" = "#6DAEDB", 
+  "Third measurements" = "#A9D7F2"  
+)
+
+## Checking the October deployment model from 
+ggplot() + 
+  geom_point(data = KG_Oct_meandat, aes(Date, mean_DW), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Oct_meandat, mapping = aes(x = Date, ymin = mean_DW-sd_DW, ymax = mean_DW+sd_DW), width = 2) + 
+  geom_smooth(aes(x = kelp_oct$datetime, y =kelp_oct$W, colour = "Deployment date"), size = 1.2) +
+  geom_smooth(aes(x = kelp_oct_1$datetime, y =kelp_oct_1$W, colour = "First measurements"), size = 1.2) +
+  geom_smooth(aes(x = kelp_oct_2$datetime, y =kelp_oct_2$W, colour = "Second measurements"), size = 1.2) +
+  geom_smooth(aes(x = kelp_oct_3$datetime, y =kelp_oct_3$W, colour = "Third measurements"), size = 1.2) +
+  labs(x = "2018-2019", y = "Weight (g DW)", colour = "Model starts from:") + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(),  
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_palette) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/Deployment_October.jpg", width = 6, height = 4, dpi = 300)
+```
+
+```{r}
+W1 <- 0.01075571
+W1_model <- kelp_oct$W[kelp_oct$datetime == as.POSIXct("2019-01-10 00:00:00", tz = "UTC")]
+W2 <- 0.41771847
+W2_model <- kelp_oct$W[kelp_oct$datetime == as.POSIXct("2019-02-04 00:00:00", tz = "UTC")]
+W3 <- 1.31612456
+W3_model <- kelp_oct$W[kelp_oct$datetime == as.POSIXct("2019-03-05 00:00:00", tz = "UTC")]
+
+DW_list <- c(
+  "model 1st measurement (g DW)" = W1_model,
+  "real  1st measurement (g DW)" = W1,
+  "model 2nd measurement (g DW)" = W2_model,
+  "real  2nd measurement (g DW)" = W2,
+  "model 3rd measurement (g DW)" = W3_model,
+  "real  3rd measurement (g DW)" = W3
+)
+
+print(knitr::kable(DW_list,caption = "List of DW of model from deployment"))
+
+final_W <- tail(kelp_oct[["W"]], 1)
+final_W1 <- tail(kelp_oct_1[["W"]], 1)
+final_W2 <- tail(kelp_oct_2[["W"]], 1)
+final_W3 <- tail(kelp_oct_3[["W"]], 1)
+
+final_W_list <- c(
+  "Harvest weight model from deployment (g DW):" = final_W, 
+  "Harvest weight model from 1st measurement (g DW):" = final_W1, 
+  "Harvest weight model from 2st measurement (g DW):" = final_W2, 
+  "Harvest weight model from 3st measurement (g DW):" = final_W3
+)
+
+print(knitr::kable(final_W_list, caption = "Final harvest weight for different models "))
+```
+
+## November, Austevoll
+
+```{r}
+W <- W_Nov
+m_EC <- 0.39
+m_EN <- 0.1
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2018-11-23 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_nov <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+## January
+
+```{r}
+W <- W_Jan
+#W<- 0.05
+m_EC <- 0.39
+m_EN <- 0.1
+M_V = W/(w_V+m_EN*w_EN+m_EC*w_EC)
+initial_state <- list(W = W, m_EC = m_EC, m_EN = m_EN, M_V = M_V)
+
+deployment_date_time = as.POSIXct("2019-01-10 00:00:00")
+harvest_date_time = as.POSIXct("2019-05-01 00:00:00")
+
+kelp_jan <- single_kelp_run(forcings = forcings_aust, 
+                deployment_date_time = deployment_date_time,
+                harvest_date_time = harvest_date_time, 
+                params = params_Lo, 
+                initial_state = initial_state)
+```
+
+## Plot, Austevoll
+
+```{r}
+custom_palette <- c(
+  "October" = "#0273B3",
+  "November" = "#CF81AC",
+  "January" = "#EBB540"
+)
+
+
+## DW 
+ggplot() + 
+  
+  #October 
+  geom_point(data = KG_Oct_meandat, aes(Date, mean_DW, colour = "October"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Oct_meandat, mapping = aes(x = Date, ymin = mean_DW-sd_DW, ymax = mean_DW+sd_DW, colour = "October"), width = 2) + 
+  geom_smooth(aes(x = kelp_oct$datetime, y =kelp_oct$W, colour = "October"), size = 1.2) +
+  
+  #November
+  geom_point(data = KG_Nov_meandat, aes(Date, mean_DW, colour = "November"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Nov_meandat, mapping = aes(x = Date, ymin = mean_DW-sd_DW, ymax = mean_DW+sd_DW, colour = "November"), width = 2) + 
+  geom_smooth(aes(x = kelp_nov$datetime, y =kelp_nov$W, colour = "November"), size = 1.2) +
+  
+  #January 
+  geom_point(data = KG_Jan_meandat, aes(Date, mean_DW, colour = "January"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Jan_meandat, mapping = aes(x = Date, ymin = mean_DW-sd_DW, ymax = mean_DW+sd_DW, colour = "January"), width = 2) + 
+  geom_smooth(aes(x = kelp_jan$datetime, y =kelp_jan$W, colour = "January"), size = 1.2) +
+  
+  #Labels and visuals
+  labs(x = "2018-2019", y = "Weight (g DW)", colour = "Deployment") + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(),  
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_palette) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/Deployments_aust.jpg", width = 6, height = 4, dpi = 300)
+```
+
+```{r}
+# Final weight model simulations 
+final_oct <- tail(kelp_oct[["W"]], 1)
+final_nov <- tail(kelp_nov[["W"]], 1)
+final_jan <- tail(kelp_jan[["W"]], 1)
+
+final_W_list <- c(
+  "October:" = final_oct, 
+  "November:" = final_nov, 
+  "January" = final_jan
+)
+
+print(knitr::kable(final_W_list, caption = "Final harvest weigh (g DW) of different deployments"))
+```
+
+```{r}
+#Thallus Area 
+
+ggplot() + 
+  
+  #October 
+  geom_point(data = KG_Oct_meandat, aes(Date, mean_area, colour = "October"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Oct_meandat, mapping = aes(x = Date, ymin = mean_area-sd_area, ymax = mean_area+sd_area, colour = "October"), width = 2) + 
+  geom_smooth(aes(x = kelp_oct$datetime, y =kelp_oct$K_area, colour = "October"), size = 1.2) +
+  
+  #November
+  geom_point(data = KG_Nov_meandat, aes(Date, mean_area, colour = "November"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Nov_meandat, mapping = aes(x = Date, ymin = mean_area-sd_area, ymax = mean_area+sd_area, colour = "November"), width = 2) + 
+  geom_smooth(aes(x = kelp_nov$datetime, y =kelp_nov$K_area, colour = "November"), size = 1.2) +
+  
+  #January 
+  geom_point(data = KG_Jan_meandat, aes(Date, mean_area, colour = "January"), shape = 18, size = 3) + 
+  geom_errorbar(data = KG_Jan_meandat, mapping = aes(x = Date, ymin = mean_area-sd_area, ymax = mean_area+sd_area, colour = "January"), width = 2) + 
+  geom_smooth(aes(x = kelp_jan$datetime, y =kelp_jan$K_area, colour = "January"), size = 1.2) +
+  
+  #Labels and visuals
+  labs(x = "2018-2019", y = expression(paste('Thallus Area ',cm^2, sep='')), colour = "Deployment") + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(),  
+    legend.position = c(0.1, 0.9),  # Move legend to top-left
+    legend.justification = c(0, 1), # Align legend to the corner
+    legend.background = element_rect(fill = "white", color = NA), 
+    legend.key = element_blank()
+  ) + 
+  scale_colour_manual(values = custom_palette) +
+  scale_x_datetime(date_labels = "%b", breaks = "month")
+
+#ggsave("plots/Deployments_aust_A.jpg", width = 6, height = 4, dpi = 300)
+```
+
+\
