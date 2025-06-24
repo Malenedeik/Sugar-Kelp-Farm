@@ -1,4 +1,4 @@
-This reposotory contains code associated with the master thesis of Malene Dekke Eik (June, 2025) : "Modelling production potential of sugar kelp in multi-use offshore area: optimal location and farm design". \
+This repository contains code associated with the master thesis of Malene Dekke Eik (June, 2025) : "Modelling production potential of sugar kelp in multi-use offshore area: optimal location and farm design". \
 Any questions about the code or data can be directed towards Malene Dekke Eik (malene.deik@gmail.com) and Antonio Aguera Garcia (antonio.aguera@hi.no). 
 
 The code for the sugar kelp DEB model is from Venolia et. al (2020) https://doi.org/10.1016/j.ecolmodel.2020.109151 ; the original code can be found at : https://github.com/CVenolia/SugarKelpDEB \
