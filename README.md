@@ -5,9 +5,9 @@ The code for the sugar kelp DEB model is from Venolia et. al (2020) https://doi.
 Data from the Austevoll farm was collected for the master thesis of Skaar (2019) https://bora.uib.no/bora-xmlui/handle/1956/21026
 
 **Code file keys:** \
-DEB_params.R: Parameters for the DEB model \
-KelpDEB_model_Venolia.R: The Kelp DEB model turned into a function by Venolia using the R package deSolve, modified to add early growth parameter \
-SolveR_R.R: The Newton_raphson solver for the net specific growth rate (r) in th Kelp DEB model, by Venolia \
+DEB_params.R: Function code for parameters for the DEB model \
+KelpDEB_model_Venolia.R: Function code for the Kelp DEB model by Venolia using the R package deSolve, modified to add early growth parameter \
+SolveR_R.R: Function code, The Newton_raphson solver for the net specific growth rate (r) in the Kelp DEB model, by Venolia \
 Austevoll_Compare.qmd: The run file to compare the modelled growth of sugar kelp in the Austevoll farm to the measured growth \
 area_W.qmd: The runfile to calculate the leaf area to weight allometric relationship and FW to DW ratio, using data from Austevoll \
  \
