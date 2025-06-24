@@ -20,9 +20,9 @@ single_kelp_run.R: Function code to model the growth of a single kelp using the 
  \
 Forcing_data_plots.qmd: The runfile to get the forcings from Utsira Nord and contains the plots \
 Plots_maps_current_wave-qmd: Runfile to plot maps, currents, and waves at Utsira Nord \
-NOAA_KdPAR.qmd: The runfile to get the average kd PAR value from NOAA data, and plot \
-
-**Data file keys:** \ 
+NOAA_KdPAR.qmd: The runfile to get the average kd PAR value from NOAA data, and plot  \
+ 
+**Data file keys:** \
 data/forcings_austevoll.csv: Forcing data for Austevoll farm location (hourly) \
 data/Mastersheet_october2019_area-weight-fouling.xlsx: Measured growth data from Austevoll farm \
 data/utsira_hourly_vars.txt: Forcing data for central point in Utsira Nord at surface for 2020 from NORWECOM.E2E (hourly) \
